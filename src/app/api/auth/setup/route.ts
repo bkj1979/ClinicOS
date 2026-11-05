@@ -1,0 +1,102 @@
+import { hashPassword, isInitialSetupRequired, openAuthDatabase } from "@/lib/auth";
+
+export const runtime = "nodejs";
+
+function isLocalRequest(request: Request): boolean {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+export async function GET(request: Request) {
+  if (!isLocalRequest(request)) {
+    return Response.json({ error: "Initial account setup is only available from this computer." }, { status: 403 });
+  }
+  try {
+    const database = openAuthDatabase();
+    try {
+      const admins = database.prepare(`
+        SELECT u.name, au.login_id AS loginId
+        FROM auth_users au JOIN users u ON u.id = au.user_id
+        WHERE au.role = 'admin' AND au.is_active = 1 AND au.password_hash IS NULL
+        ORDER BY u.name
+      `).all();
+      return Response.json({ required: await isInitialSetupRequired(), admins });
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    console.error("Could not check the initial account setup:", error);
+    return Response.json({ error: "Unable to check initial account setup." }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  if (!isLocalRequest(request)) {
+    return Response.json({ error: "Initial account setup is only available from this computer." }, { status: 403 });
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "Administrator account credentials are required." }, { status: 400 });
+  }
+  const credentials = (body as { credentials?: unknown }).credentials;
+  if (!Array.isArray(credentials) || credentials.length < 1) {
+    return Response.json({ error: "Set passwords for all administrator accounts shown." }, { status: 400 });
+  }
+
+  const normalized = credentials.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const item = value as { loginId?: unknown; password?: unknown };
+    return {
+      loginId: typeof item.loginId === "string" ? item.loginId.trim().toLowerCase() : "",
+      password: typeof item.password === "string" ? item.password : "",
+    };
+  });
+  if (normalized.some((item) => !item?.loginId || item.password.length < 12)) {
+    return Response.json({ error: "Each administrator password must contain at least 12 characters." }, { status: 400 });
+  }
+  const setupCredentials = normalized as Array<{ loginId: string; password: string }>;
+  if (new Set(setupCredentials.map((item) => item.loginId)).size !== setupCredentials.length) {
+    return Response.json({ error: "Each administrator account must have a unique login ID." }, { status: 400 });
+  }
+
+  let database: ReturnType<typeof openAuthDatabase> | undefined;
+  try {
+    const hashes = await Promise.all(setupCredentials.map((item) => hashPassword(item.password)));
+    database = openAuthDatabase();
+    database.exec("BEGIN IMMEDIATE");
+    const admins = database.prepare(`
+      SELECT login_id AS loginId FROM auth_users
+      WHERE role = 'admin' AND is_active = 1 AND password_hash IS NULL
+      ORDER BY login_id
+    `).all() as Array<{ loginId: string }>;
+    if (admins.length !== setupCredentials.length || !admins.every((admin) => setupCredentials.some((item) => item.loginId === admin.loginId))) {
+      database.exec("ROLLBACK");
+      return Response.json({ error: "Initial setup is no longer available. Please sign in." }, { status: 409 });
+    }
+
+    const update = database.prepare(`
+      UPDATE auth_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE login_id = ? AND role = 'admin' AND password_hash IS NULL
+    `);
+    for (const [index, credential] of setupCredentials.entries()) {
+      const result = update.run(hashes[index], credential.loginId);
+      if (result.changes !== 1) {
+        database.exec("ROLLBACK");
+        return Response.json({ error: "Initial setup could not be completed. Refresh and try again." }, { status: 409 });
+      }
+    }
+    database.exec("COMMIT");
+    return Response.json({ configured: true });
+  } catch (error) {
+    if (database?.isTransaction) database.exec("ROLLBACK");
+    console.error("Could not complete the initial administrator setup:", error);
+    return Response.json({ error: "Unable to complete initial administrator setup." }, { status: 500 });
+  } finally {
+    database?.close();
+  }
+}

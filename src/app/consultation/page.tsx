@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import {
   Stethoscope, ClipboardList, Pill, FlaskConical, FileSearch,
-  Save, CheckCircle2, Printer, Receipt, Mic, MicOff,
+  Save, CheckCircle2, Printer, Receipt, Mic,
   AlertTriangle, Heart, Thermometer, Activity, Wind,
   Droplets, Weight, Ruler, Brain, ChevronRight, Plus,
   Trash2, Search, Clock, User, Shield, ArrowLeft, X,
@@ -53,7 +54,6 @@ const icdCodes = [
 
 export default function ConsultationPage() {
   const [activeTab, setActiveTab] = useState<"soap" | "vitals" | "rx" | "labs" | "diagnosis">("soap");
-  const [isRecording, setIsRecording] = useState(false);
   const [soap, setSoap] = useState(encounter.notes);
   const [vitals, setVitals] = useState({
     temperature: 98.2, bpSys: 138, bpDia: 88, heartRate: 78, respRate: 16,
@@ -146,17 +146,13 @@ export default function ConsultationPage() {
               {patient.chronicConditions.map((c) => (
                 <span key={c} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[11px] font-medium">{c}</span>
               ))}
-              {/* AI Voice Scribe Toggle */}
-              <button
-                onClick={() => setIsRecording(!isRecording)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  isRecording ? "bg-red-500 text-white animate-pulse" : "bg-violet-100 text-violet-700 hover:bg-violet-200"
-                )}
+              <Link
+                href={`/voice-scribe?patientId=${encodeURIComponent(patient.id)}&chiefComplaint=${encodeURIComponent(encounter.chiefComplaint)}&visitType=${encodeURIComponent(encounter.type)}`}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all bg-violet-100 text-violet-700 hover:bg-violet-200"
               >
-                {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                {isRecording ? "Stop Recording" : "AI Voice Scribe"}
-              </button>
+                <Mic className="w-3.5 h-3.5" />
+                AI Voice Scribe
+              </Link>
             </div>
           </div>
           <div className="mt-3 p-2 bg-slate-50 rounded-lg text-sm text-slate-600">
@@ -619,4 +615,3 @@ export default function ConsultationPage() {
     </AppLayout>
   );
 }
-

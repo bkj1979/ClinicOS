@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { FormEvent, useEffect, useState } from "react";
 import {
-  Settings, Building2, Users, Shield, Bell, Printer, Database,
-  Globe, Clock, Save, CheckCircle2, ChevronRight, Key, Mail,
-  Palette, Monitor, Smartphone, HardDrive, Upload, Download,
+  Building2, Users, Shield, Bell, Printer, Database, UserPlus, X,
+  Globe, Save, CheckCircle2, ChevronRight, Key, Mail,
+  Monitor, Smartphone, HardDrive, Upload, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { centres, users } from "@/lib/mock-data";
+import { centres } from "@/lib/mock-data";
 import AppLayout from "@/components/layout/app-layout";
 
 const tabs = [
@@ -22,8 +22,99 @@ const tabs = [
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("clinic");
   const [saved, setSaved] = useState(false);
+  const [accounts, setAccounts] = useState<Array<{
+    userId: string;
+    name: string;
+    loginId: string;
+    role: "admin" | "doctor" | "receptionist" | "pharmacist" | "nurse" | "lab_tech";
+    phone: string;
+    specialization: string | null;
+    isActive: number;
+    passwordConfigured: number;
+  }>>([]);
+  const [accountsError, setAccountsError] = useState("");
+  const [editingAccount, setEditingAccount] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserRole, setNewUserRole] = useState<"doctor" | "receptionist" | "pharmacist" | "nurse" | "admin" | "lab_tech">("doctor");
+  const [newUserPhone, setNewUserPhone] = useState("");
+  const [newUserSpecialization, setNewUserSpecialization] = useState("");
+
+  const newUserLoginId = `${newUserName.trim().replace(/^dr\.?\s*/i, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@clinicos.in`;
 
   const handleSave = () => { setSaved(true); setTimeout(() => setSaved(false), 2000); };
+
+  useEffect(() => {
+    if (activeTab !== "users") return;
+    let active = true;
+    fetch("/api/auth/users", { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json() as { users?: typeof accounts; error?: string };
+        if (!response.ok) throw new Error(result.error || "Unable to load login accounts.");
+        if (active) setAccounts(result.users || []);
+      })
+      .catch((error: unknown) => {
+        if (active) setAccountsError(error instanceof Error ? error.message : "Unable to load login accounts.");
+      })
+      .finally(() => { if (active) setAccountsLoading(false); });
+    return () => { active = false; };
+  }, [activeTab]);
+
+  const handleSetPassword = async (event: FormEvent<HTMLFormElement>, userId: string) => {
+    event.preventDefault();
+    setAccountsError("");
+    setPasswordMessage("");
+    try {
+      const response = await fetch("/api/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, password: newPassword }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Unable to set this password.");
+      setAccounts((current) => current.map((account) => account.userId === userId ? { ...account, passwordConfigured: 1 } : account));
+      setEditingAccount("");
+      setNewPassword("");
+      setPasswordMessage("Password saved securely. It cannot be viewed here.");
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : "Unable to set this password.");
+    }
+  };
+
+  const handleAddUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAccountsError("");
+    setPasswordMessage("");
+    try {
+      const response = await fetch("/api/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          name: newUserName,
+          loginId: newUserLoginId,
+          role: newUserRole,
+          phone: newUserPhone,
+          specialization: newUserSpecialization,
+        }),
+      });
+      const result = await response.json() as { user?: typeof accounts[number]; error?: string };
+      if (!response.ok || !result.user) throw new Error(result.error || "Unable to add this user.");
+      const createdUser = result.user;
+      setAccounts((current) => [...current, createdUser].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewUserName("");
+      setNewUserRole("doctor");
+      setNewUserPhone("");
+      setNewUserSpecialization("");
+      setShowAddUser(false);
+      setPasswordMessage(`User added. Set a password for ${createdUser.loginId} below.`);
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : "Unable to add this user.");
+    }
+  };
 
   return (
     <AppLayout>
@@ -43,7 +134,7 @@ export default function SettingsPage() {
           {/* Sidebar */}
           <div className="bg-white rounded-xl border border-slate-200 p-2 h-fit">
             {tabs.map((tab) => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              <button key={tab.id} onClick={() => { if (tab.id === "users") setAccountsLoading(true); setActiveTab(tab.id); }}
                 className={cn("w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                   activeTab === tab.id ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:bg-slate-50")}>
                 <tab.icon className="w-4 h-4" />{tab.label}
@@ -88,34 +179,82 @@ export default function SettingsPage() {
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold text-slate-800">Users & Roles</h2>
-                  <button className="flex items-center gap-1 px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600">
-                    <Users className="w-4 h-4" /> Add User
+                  <button type="button" onClick={() => { setShowAddUser((current) => !current); setAccountsError(""); }} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                    {showAddUser ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                    {showAddUser ? "Cancel" : "Add User"}
                   </button>
                 </div>
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50"><tr>
-                      <th className="text-left px-4 py-2 font-medium text-slate-600">Name</th>
-                      <th className="text-left px-4 py-2 font-medium text-slate-600">Role</th>
-                      <th className="text-left px-4 py-2 font-medium text-slate-600">Email</th>
-                      <th className="text-left px-4 py-2 font-medium text-slate-600">Phone</th>
-                      <th className="text-left px-4 py-2 font-medium text-slate-600">Status</th>
-                    </tr></thead>
-                    <tbody>
-                      {users.map((u) => (
-                        <tr key={u.id} className="border-t hover:bg-slate-50">
-                          <td className="px-4 py-2.5 font-medium text-slate-800">{u.name}</td>
-                          <td className="px-4 py-2.5"><span className={cn("px-2 py-0.5 rounded text-[10px] font-medium",
-                            u.role === "doctor" ? "bg-blue-100 text-blue-700" : u.role === "admin" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"
-                          )}>{u.role}</span></td>
-                          <td className="px-4 py-2.5 text-slate-500">{u.email}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{u.phone}</td>
-                          <td className="px-4 py-2.5"><span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", u.isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700")}>{u.isActive ? "Active" : "Inactive"}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <p className="text-xs leading-5 text-slate-500">Roles come directly from the Users table. Login IDs use the stored email address. Passwords are stored as secure hashes and are never displayed.</p>
+                {showAddUser && (
+                  <form onSubmit={(event) => void handleAddUser(event)} className="grid gap-4 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="new-user-name" className="mb-1.5 block text-xs font-medium text-slate-700">Name</label>
+                      <input id="new-user-name" required maxLength={120} value={newUserName} onChange={(event) => setNewUserName(event.target.value)} placeholder="Dr Hitendra Pandey" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500" />
+                    </div>
+                    <div>
+                      <label htmlFor="new-user-role" className="mb-1.5 block text-xs font-medium text-slate-700">Role</label>
+                      <select id="new-user-role" value={newUserRole} onChange={(event) => setNewUserRole(event.target.value as typeof newUserRole)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm capitalize outline-none focus:border-emerald-500">
+                        {(["doctor", "receptionist", "pharmacist", "nurse", "admin", "lab_tech"] as const).map((role) => <option key={role} value={role}>{role === "lab_tech" ? "Lab Technician" : role}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="new-user-login" className="mb-1.5 block text-xs font-medium text-slate-700">Login ID</label>
+                      <input id="new-user-login" readOnly value={newUserLoginId === "@clinicos.in" ? "" : newUserLoginId} placeholder="firstname.lastname@clinicos.in" className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600" />
+                    </div>
+                    <div>
+                      <label htmlFor="new-user-phone" className="mb-1.5 block text-xs font-medium text-slate-700">Phone (optional)</label>
+                      <input id="new-user-phone" type="tel" maxLength={32} value={newUserPhone} onChange={(event) => setNewUserPhone(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500" />
+                    </div>
+                    {newUserRole === "doctor" && <div>
+                      <label htmlFor="new-user-specialization" className="mb-1.5 block text-xs font-medium text-slate-700">Specialization (optional)</label>
+                      <input id="new-user-specialization" maxLength={120} value={newUserSpecialization} onChange={(event) => setNewUserSpecialization(event.target.value)} placeholder="e.g. General Medicine" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500" />
+                    </div>}
+                    <div className="flex items-end sm:col-span-2">
+                      <button type="submit" disabled={!newUserName.trim() || newUserLoginId === "@clinicos.in"} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">Create account</button>
+                      <p className="ml-3 text-xs text-slate-500">The account is added to Users; set its password in the table below.</p>
+                    </div>
+                  </form>
+                )}
+                {accountsError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{accountsError}</p>}
+                {passwordMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{passwordMessage}</p>}
+                {accountsLoading ? <p className="text-sm text-slate-500">Loading login accounts...</p> : (
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="w-full min-w-[690px] text-sm">
+                      <thead className="bg-slate-50"><tr>
+                        <th className="px-4 py-3 text-left font-medium text-slate-600">Name</th>
+                        <th className="px-4 py-3 text-left font-medium text-slate-600">Login ID</th>
+                        <th className="px-4 py-3 text-left font-medium text-slate-600">Access</th>
+                        <th className="px-4 py-3 text-left font-medium text-slate-600">Password</th>
+                      </tr></thead>
+                      <tbody>
+                        {accounts.map((account) => (
+                          <tr key={account.userId} className="border-t align-top hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-800">{account.name}</p>
+                              <p className="mt-0.5 text-xs text-slate-500">{account.specialization || "Doctor"}</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">{account.loginId}</td>
+                            <td className="px-4 py-3"><span className={cn("rounded px-2 py-1 text-[10px] font-semibold capitalize", account.role === "admin" ? "bg-violet-100 text-violet-700" : account.role === "doctor" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-700")}>{account.role}</span></td>
+                            <td className="px-4 py-3">
+                              {editingAccount === account.userId ? (
+                                <form onSubmit={(event) => void handleSetPassword(event, account.userId)} className="flex min-w-56 items-center gap-2">
+                                  <input aria-label={`New password for ${account.name}`} type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="12+ characters" className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-xs" />
+                                  <button type="submit" className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white">Save</button>
+                                  <button type="button" onClick={() => { setEditingAccount(""); setNewPassword(""); }} className="text-xs text-slate-500">Cancel</button>
+                                </form>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <span className={cn("text-xs", account.passwordConfigured ? "text-emerald-700" : "text-amber-700")}>{account.passwordConfigured ? "Configured" : "Not set"}</span>
+                                  <button type="button" onClick={() => { setEditingAccount(account.userId); setNewPassword(""); }} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-white">{account.passwordConfigured ? "Reset" : "Set password"}</button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
@@ -213,4 +352,3 @@ export default function SettingsPage() {
     </AppLayout>
   );
 }
-

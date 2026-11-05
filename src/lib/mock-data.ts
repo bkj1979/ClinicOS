@@ -1,7 +1,7 @@
 // ============================================================
 // ClinicOS — Comprehensive Mock Data
 // ============================================================
-import { Patient, Appointment, QueueEntry, Drug, Invoice, Encounter, Prescription, Supplier, PurchaseOrder, LabOrder, ABDMRecord, Centre, User } from "./types";
+import type { Patient, Appointment, QueueEntry, Drug, Invoice, Encounter, Prescription, Supplier, Centre, User } from "./types";
 
 // ---- Centres ----
 export const centres: Centre[] = [
@@ -15,11 +15,11 @@ export const users: User[] = [
   { id: "u1", name: "Dr. Priya Sharma", email: "priya.sharma@clinicos.in", role: "doctor", phone: "9876543210", specialization: "General Medicine", registrationNo: "KMC-45678", isActive: true, centres: ["c1", "c2"] },
   { id: "u2", name: "Dr. Rajesh Patel", email: "rajesh.patel@clinicos.in", role: "doctor", phone: "9876543211", specialization: "Cardiology", registrationNo: "KMC-45679", isActive: true, centres: ["c1"] },
   { id: "u3", name: "Dr. Ananya Reddy", email: "ananya.reddy@clinicos.in", role: "doctor", phone: "9876543212", specialization: "Dermatology", registrationNo: "KMC-45680", isActive: true, centres: ["c1", "c3"] },
-  { id: "u4", name: "Dr. Mohammed Irfan", email: "irfan@clinicos.in", role: "doctor", phone: "9876543213", specialization: "Orthopedics", registrationNo: "KMC-45681", isActive: true, centres: ["c2"] },
-  { id: "u5", name: "Dr. Kavitha Nair", email: "kavitha@clinicos.in", role: "doctor", phone: "9876543214", specialization: "Pediatrics", registrationNo: "KMC-45682", isActive: true, centres: ["c3"] },
-  { id: "u6", name: "Meera Joshi", email: "meera@clinicos.in", role: "receptionist", phone: "9876543215", isActive: true, centres: ["c1"] },
-  { id: "u7", name: "Suresh Kumar", email: "suresh@clinicos.in", role: "pharmacist", phone: "9876543216", isActive: true, centres: ["c1"] },
-  { id: "u8", name: "Lakshmi Devi", email: "lakshmi@clinicos.in", role: "nurse", phone: "9876543217", isActive: true, centres: ["c1", "c2"] },
+  { id: "u4", name: "Dr. Mohammed Irfan", email: "mohammed.irfan@clinicos.in", role: "doctor", phone: "9876543213", specialization: "Orthopedics", registrationNo: "KMC-45681", isActive: true, centres: ["c2"] },
+  { id: "u5", name: "Dr. Kavitha Nair", email: "kavitha.nair@clinicos.in", role: "doctor", phone: "9876543214", specialization: "Pediatrics", registrationNo: "KMC-45682", isActive: true, centres: ["c3"] },
+  { id: "u6", name: "Meera Joshi", email: "meera.joshi@clinicos.in", role: "receptionist", phone: "9876543215", isActive: true, centres: ["c1"] },
+  { id: "u7", name: "Suresh Kumar", email: "suresh.kumar@clinicos.in", role: "pharmacist", phone: "9876543216", isActive: true, centres: ["c1"] },
+  { id: "u8", name: "Lakshmi Devi", email: "lakshmi.devi@clinicos.in", role: "nurse", phone: "9876543217", isActive: true, centres: ["c1", "c2"] },
   { id: "u9", name: "Admin User", email: "admin@clinicos.in", role: "admin", phone: "9876543218", isActive: true, centres: ["c1", "c2", "c3"] },
 ];
 
@@ -259,4 +259,3 @@ export const dailyPatientFlow = [
   { hour: "6 PM", walkin: 4, scheduled: 8 },
   { hour: "7 PM", walkin: 2, scheduled: 4 },
 ];
-

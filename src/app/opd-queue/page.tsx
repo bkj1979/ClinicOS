@@ -1,14 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Users,
   Clock,
   CheckCircle2,
-  AlertTriangle,
   UserPlus,
   Phone,
-  ChevronRight,
   Timer,
   Play,
   SkipForward,
@@ -19,13 +17,9 @@ import {
   RefreshCw,
   Volume2,
   MonitorPlay,
-  Filter,
-  Heart,
-  Thermometer,
   Eye,
 } from "lucide-react";
-import { cn, getStatusColor, getInitials, formatCurrency } from "@/lib/utils";
-import { appointments, opdQueue, users } from "@/lib/mock-data";
+import { cn } from "@/lib/utils";
 import AppLayout from "@/components/layout/app-layout";
 
 interface QueuePatient {
@@ -77,6 +71,20 @@ export default function OPDQueuePage() {
   const [currentTime, setCurrentTime] = useState<Date>(() => new Date("2026-11-02T10:30:00"));
   const [timeStr, setTimeStr] = useState("10:30:00 AM");
   const [showWalkinModal, setShowWalkinModal] = useState(false);
+  const [walkInForm, setWalkInForm] = useState({
+    name: "",
+    phone: "",
+    age: "",
+    gender: "Male",
+    priority: "normal",
+    doctorId: "u1",
+    chiefComplaint: "",
+  });
+  const [walkInSubmitting, setWalkInSubmitting] = useState(false);
+  const [walkInError, setWalkInError] = useState("");
+  const [queueError, setQueueError] = useState("");
+  const [queueNotice, setQueueNotice] = useState("");
+  const persistentQueueIds = useRef(new Set<string>());
 
   useEffect(() => {
     const update = () => {
@@ -89,6 +97,34 @@ export default function OPDQueuePage() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/opd-queue")
+      .then(async (response) => {
+        if (!response.ok) {
+          const result = await response.json() as { error?: string };
+          throw new Error(result.error || "Unable to load the OPD queue.");
+        }
+        return response.json() as Promise<QueuePatient[]>;
+      })
+      .then((persistedQueue) => {
+        if (!active) return;
+        for (const patient of persistedQueue) persistentQueueIds.current.add(patient.id);
+        setQueue((current) => {
+          const existingIds = new Set(current.map((patient) => patient.id));
+          return [...current, ...persistedQueue.filter((patient) => !existingIds.has(patient.id))];
+        });
+      })
+      .catch((error: unknown) => {
+        if (active) setQueueError(error instanceof Error ? error.message : "Unable to load the OPD queue.");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const filteredQueue = selectedDoctor === "all" ? queue : queue.filter((q) => q.doctorId === selectedDoctor);
   const waiting = filteredQueue.filter((q) => q.status === "waiting");
   const inConsultation = filteredQueue.filter((q) => q.status === "in-consultation");
@@ -97,37 +133,99 @@ export default function OPDQueuePage() {
 
   const avgWaitTime = waiting.length > 0 ? Math.round(waiting.reduce((s, q) => s + q.estimatedWaitMinutes, 0) / waiting.length) : 0;
 
-  const handleCallNext = (doctorId: string) => {
-    setQueue((prev) => {
-      const updated = [...prev];
-      const nextWaiting = updated.find((q) => q.doctorId === doctorId && q.status === "waiting");
-      if (nextWaiting) {
-        nextWaiting.status = "in-consultation";
-        nextWaiting.consultStartTime = new Date().toISOString();
-        nextWaiting.estimatedWaitMinutes = 0;
+  const updateQueueStatus = async (id: string, status: QueuePatient["status"]) => {
+    const now = new Date().toISOString();
+    if (persistentQueueIds.current.has(id)) {
+      try {
+        const response = await fetch("/api/opd-queue", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            status,
+            consultStartTime: status === "in-consultation" ? now : undefined,
+            consultEndTime: status === "completed" ? now : undefined,
+          }),
+        });
+        const result = await response.json() as QueuePatient | { error?: string };
+        if (!response.ok) {
+          throw new Error("error" in result ? result.error : "Unable to update the OPD queue.");
+        }
+        setQueue((current) => current.map((patient) => patient.id === id ? result as QueuePatient : patient));
+        setQueueError("");
+      } catch (error) {
+        setQueueError(error instanceof Error ? error.message : "Unable to update the OPD queue.");
       }
-      return updated;
-    });
+      return;
+    }
+
+    setQueue((current) => current.map((patient) => patient.id === id ? {
+      ...patient,
+      status,
+      ...(status === "in-consultation" ? { consultStartTime: now, estimatedWaitMinutes: 0 } : {}),
+      ...(status === "completed" ? { consultEndTime: now } : {}),
+    } : patient));
+  };
+
+  const handleCallNext = (doctorId: string) => {
+    const nextWaiting = queue.find((patient) => patient.doctorId === doctorId && patient.status === "waiting");
+    if (nextWaiting) void updateQueueStatus(nextWaiting.id, "in-consultation");
   };
 
   const handleComplete = (id: string) => {
-    setQueue((prev) =>
-      prev.map((q) =>
-        q.id === id ? { ...q, status: "completed" as const, consultEndTime: new Date().toISOString() } : q
-      )
-    );
+    void updateQueueStatus(id, "completed");
   };
 
   const handleSkip = (id: string) => {
-    setQueue((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, status: "skipped" as const } : q))
-    );
+    void updateQueueStatus(id, "skipped");
   };
 
   const handleRecall = (id: string) => {
-    setQueue((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, status: "waiting" as const } : q))
-    );
+    void updateQueueStatus(id, "waiting");
+  };
+
+  const handleWalkInSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setWalkInSubmitting(true);
+    setWalkInError("");
+
+    try {
+      const response = await fetch("/api/opd-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...walkInForm, age: Number(walkInForm.age) }),
+      });
+      const result = await response.json() as QueuePatient & {
+        error?: string;
+        patientCreated?: boolean;
+        uhid?: string;
+      };
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to register this walk-in.");
+      }
+
+      persistentQueueIds.current.add(result.id);
+      setQueue((current) => [...current, result]);
+      setQueueNotice(
+        result.patientCreated
+          ? `${result.patientName} registered as a patient and added to the queue (${result.tokenNumber}).`
+          : `${result.patientName} added to the queue (${result.tokenNumber}).`,
+      );
+      setWalkInForm({
+        name: "",
+        phone: "",
+        age: "",
+        gender: "Male",
+        priority: "normal",
+        doctorId: "u1",
+        chiefComplaint: "",
+      });
+      setShowWalkinModal(false);
+    } catch (error) {
+      setWalkInError(error instanceof Error ? error.message : "Unable to register this walk-in.");
+    } finally {
+      setWalkInSubmitting(false);
+    }
   };
 
   const getElapsedTime = (startTime?: string) => {
@@ -181,6 +279,25 @@ export default function OPDQueuePage() {
             </button>
           </div>
         </div>
+
+        {(queueError || queueNotice) && (
+          <div className={cn(
+            "flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm",
+            queueError
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-800",
+          )}>
+            <p role={queueError ? "alert" : "status"}>{queueError || queueNotice}</p>
+            <button
+              type="button"
+              onClick={() => { setQueueError(""); setQueueNotice(""); }}
+              className="shrink-0 font-medium"
+              aria-label="Dismiss message"
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         {/* Stats Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -287,7 +404,7 @@ export default function OPDQueuePage() {
                   <p className="text-sm">No patients waiting</p>
                 </div>
               ) : (
-                waiting.map((patient, idx) => (
+                waiting.map((patient) => (
                   <div
                     key={patient.id}
                     className={cn(
@@ -326,7 +443,7 @@ export default function OPDQueuePage() {
                         <span>{patient.department}</span>
                       </div>
                       {patient.chiefComplaint && (
-                        <p className="text-xs text-slate-400 italic truncate">"{patient.chiefComplaint}"</p>
+                        <p className="text-xs text-slate-400 italic truncate">&quot;{patient.chiefComplaint}&quot;</p>
                       )}
                       <div className="flex items-center gap-3">
                         <span className="flex items-center gap-1 text-[11px] text-slate-500">
@@ -569,40 +686,93 @@ export default function OPDQueuePage() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
               <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
                 <h2 className="text-lg font-bold text-slate-800">Walk-in Registration</h2>
-                <button onClick={() => setShowWalkinModal(false)} className="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
+                <button
+                  type="button"
+                  disabled={walkInSubmitting}
+                  onClick={() => { setShowWalkinModal(false); setWalkInError(""); }}
+                  className="text-slate-400 hover:text-slate-600 text-xl disabled:opacity-50"
+                  aria-label="Close walk-in registration"
+                >
+                  &times;
+                </button>
               </div>
-              <div className="p-6 space-y-4">
+              <form onSubmit={handleWalkInSubmit}>
+                <div className="p-6 space-y-4">
+                  {walkInError && (
+                    <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {walkInError}
+                    </p>
+                  )}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Patient Name *</label>
-                    <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Full name" />
+                    <input
+                      type="text"
+                      required
+                      maxLength={120}
+                      value={walkInForm.name}
+                      onChange={(event) => setWalkInForm((form) => ({ ...form, name: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="Full name"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Phone *</label>
-                    <input type="tel" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="+91 XXXXX XXXXX" />
+                    <input
+                      type="tel"
+                      required
+                      value={walkInForm.phone}
+                      onChange={(event) => setWalkInForm((form) => ({ ...form, phone: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="+91 XXXXX XXXXX"
+                    />
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Age *</label>
-                    <input type="number" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Age" />
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      max={120}
+                      step={1}
+                      value={walkInForm.age}
+                      onChange={(event) => setWalkInForm((form) => ({ ...form, age: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="Age"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Gender *</label>
-                    <select className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
+                    <select
+                      value={walkInForm.gender}
+                      onChange={(event) => setWalkInForm((form) => ({ ...form, gender: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    >
                       <option>Male</option><option>Female</option><option>Other</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Priority</label>
-                    <select className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
-                      <option>Normal</option><option>Urgent</option><option>Emergency</option>
+                    <select
+                      value={walkInForm.priority}
+                      onChange={(event) => setWalkInForm((form) => ({ ...form, priority: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="emergency">Emergency</option>
                     </select>
                   </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Doctor *</label>
-                  <select className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
+                  <select
+                    value={walkInForm.doctorId}
+                    onChange={(event) => setWalkInForm((form) => ({ ...form, doctorId: event.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  >
                     {doctors.filter(d => d.id !== "all").map(d => (
                       <option key={d.id} value={d.id}>{d.name} — {'department' in d ? d.department : ''}</option>
                     ))}
@@ -610,13 +780,34 @@ export default function OPDQueuePage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Chief Complaint</label>
-                  <textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none" rows={2} placeholder="Brief complaint description" />
+                  <textarea
+                    maxLength={1000}
+                    value={walkInForm.chiefComplaint}
+                    onChange={(event) => setWalkInForm((form) => ({ ...form, chiefComplaint: event.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
+                    rows={2}
+                    placeholder="Brief complaint description"
+                  />
                 </div>
-              </div>
-              <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-                <button onClick={() => setShowWalkinModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
-                <button onClick={() => { setShowWalkinModal(false); alert("Patient registered and added to queue!"); }} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600">Register & Add to Queue</button>
-              </div>
+                </div>
+                <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={walkInSubmitting}
+                    onClick={() => { setShowWalkinModal(false); setWalkInError(""); }}
+                    className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={walkInSubmitting}
+                    className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-60"
+                  >
+                    {walkInSubmitting ? "Registering..." : "Register & Add to Queue"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -624,4 +815,3 @@ export default function OPDQueuePage() {
     </AppLayout>
   );
 }
-

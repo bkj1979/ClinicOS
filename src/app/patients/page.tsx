@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, type FormEvent } from "react";
 import {
   Search, UserPlus, Users, CalendarDays, UserCheck, Shield,
   Phone, Mail, MapPin, Heart, AlertTriangle, ChevronRight,
@@ -92,29 +92,56 @@ const labResults: Record<string, Array<{ test: string; result: string; range: st
 // Patient Registry Page
 // ===================================================================
 export default function PatientsPage() {
+  const [patientRecords, setPatientRecords] = useState<Patient[]>(patients);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [detailTab, setDetailTab] = useState<"demographics" | "visits" | "allergies" | "vitals" | "prescriptions" | "labs">("demographics");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/patients")
+      .then(async (response) => {
+        const result = await response.json() as Patient[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) {
+          throw new Error("error" in result ? result.error : "Unable to load patients.");
+        }
+        if (active) {
+          setPatientRecords(result);
+          setLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load patients.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredPatients = useMemo(() => {
-    if (!searchQuery.trim()) return patients;
+    if (!searchQuery.trim()) return patientRecords;
     const q = searchQuery.toLowerCase();
-    return patients.filter(
+    return patientRecords.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.phone.includes(q) ||
         p.uhid.toLowerCase().includes(q) ||
         (p.abhaId && p.abhaId.includes(q))
     );
-  }, [searchQuery]);
+  }, [patientRecords, searchQuery]);
 
   const stats = useMemo(() => {
     const activeThisMonth = 8;
     const newThisMonth = 2;
-    const abhaLinked = patients.filter((p) => p.abhaId).length;
-    return { total: patients.length, activeThisMonth, newThisMonth, abhaLinked };
-  }, []);
+    const abhaLinked = patientRecords.filter((p) => p.abhaId).length;
+    return { total: patientRecords.length, activeThisMonth, newThisMonth, abhaLinked };
+  }, [patientRecords]);
 
   return (
     <AppLayout>
@@ -125,7 +152,7 @@ export default function PatientsPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Patient Registry</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              {patients.length} patients registered · EMR & Health Records
+              {patientRecords.length} patients registered · EMR & Health Records
             </p>
           </div>
           <button
@@ -139,6 +166,11 @@ export default function PatientsPage() {
       </div>
 
       <div className="p-6 space-y-6">
+        {loadError && (
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            Could not load the patient database: {loadError}
+          </div>
+        )}
         {/* Quick Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
@@ -365,7 +397,14 @@ export default function PatientsPage() {
 
       {/* Register New Patient Modal */}
       {showRegisterModal && (
-        <RegisterPatientModal onClose={() => setShowRegisterModal(false)} />
+        <RegisterPatientModal
+          onClose={() => setShowRegisterModal(false)}
+          onRegistered={(patient) => {
+            setPatientRecords((current) => [patient, ...current]);
+            setSelectedPatient(patient);
+            setShowRegisterModal(false);
+          }}
+        />
       )}
       </div>
     </AppLayout>
@@ -627,7 +666,15 @@ function LabsTab({ patientId }: { patientId: string }) {
 // ===================================================================
 // Register Patient Modal
 // ===================================================================
-function RegisterPatientModal({ onClose }: { onClose: () => void }) {
+function RegisterPatientModal({
+  onClose,
+  onRegistered,
+}: {
+  onClose: () => void;
+  onRegistered: (patient: Patient) => void;
+}) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({
     name: "", phone: "", email: "", gender: "Male", dob: "",
     bloodGroup: "", addressLine1: "", city: "Bangalore", state: "Karnataka", pincode: "",
@@ -638,22 +685,56 @@ function RegisterPatientModal({ onClose }: { onClose: () => void }) {
 
   const update = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setIsSaving(true);
+
+    try {
+      const response = await fetch("/api/patients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const result = await response.json() as Patient | { error?: string };
+
+      if (!response.ok || !("id" in result)) {
+        throw new Error("error" in result ? result.error : "Unable to register patient.");
+      }
+
+      onRegistered(result);
+    } catch (submissionError) {
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : "Unable to register patient. Please try again.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Register New Patient</h2>
             <p className="text-xs text-slate-500">Fill in patient details to create a new record</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Modal Body */}
         <div className="overflow-y-auto flex-1 p-6 space-y-5">
+          {error && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
           {/* Personal Info */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
@@ -661,14 +742,15 @@ function RegisterPatientModal({ onClose }: { onClose: () => void }) {
               Personal Information
             </h3>
             <div className="grid grid-cols-2 gap-3">
-              <InputField label="Full Name *" value={form.name} onChange={(v) => update("name", v)} placeholder="Patient full name" />
-              <InputField label="Phone Number *" value={form.phone} onChange={(v) => update("phone", v)} placeholder="10-digit mobile" />
-              <InputField label="Email" value={form.email} onChange={(v) => update("email", v)} placeholder="email@example.com" />
+              <InputField label="Full Name *" value={form.name} onChange={(v) => update("name", v)} placeholder="Patient full name" required />
+              <InputField label="Phone Number *" value={form.phone} onChange={(v) => update("phone", v)} placeholder="10-digit mobile" type="tel" required />
+              <InputField label="Email" value={form.email} onChange={(v) => update("email", v)} placeholder="email@example.com" type="email" />
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Gender *</label>
                 <select
                   value={form.gender}
                   onChange={(e) => update("gender", e.target.value)}
+                  required
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="Male">Male</option>
@@ -676,7 +758,7 @@ function RegisterPatientModal({ onClose }: { onClose: () => void }) {
                   <option value="Other">Other</option>
                 </select>
               </div>
-              <InputField label="Date of Birth *" value={form.dob} onChange={(v) => update("dob", v)} type="date" />
+              <InputField label="Date of Birth *" value={form.dob} onChange={(v) => update("dob", v)} type="date" required />
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Blood Group</label>
                 <select
@@ -750,26 +832,27 @@ function RegisterPatientModal({ onClose }: { onClose: () => void }) {
 
         {/* Modal Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+          <button type="button" onClick={onClose} disabled={isSaving} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors shadow-sm">
-            Register Patient
+          <button type="submit" disabled={isSaving} className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors shadow-sm disabled:opacity-60">
+            {isSaving ? "Registering..." : "Register Patient"}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
-function InputField({ label, value, onChange, placeholder, type = "text" }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+function InputField({ label, value, onChange, placeholder, type = "text", required = false }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; required?: boolean;
 }) {
   return (
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
       <input
         type={type}
+        required={required}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

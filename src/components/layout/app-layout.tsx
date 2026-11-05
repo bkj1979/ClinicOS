@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -26,6 +26,7 @@ import {
   User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { AuthUser } from "@/lib/auth-types";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -39,17 +40,67 @@ const navigation = [
   { name: "AI Voice Scribe", href: "/voice-scribe", icon: Mic },
   { name: "Analytics & BI", href: "/analytics", icon: BarChart3 },
   { name: "ABDM / NABH", href: "/compliance", icon: Shield },
-  { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [centreDropdown, setCentreDropdown] = useState(false);
   const [profileDropdown, setProfileDropdown] = useState(false);
   const [selectedCentre, setSelectedCentre] = useState("ClinicOS - Koramangala");
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
 
   const centres = ["ClinicOS - Koramangala", "ClinicOS - Indiranagar", "ClinicOS - HSR Layout"];
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then(async (response) => {
+        if (response.status === 401) {
+          router.replace("/login");
+          return null;
+        }
+        const result = await response.json() as { user?: AuthUser; error?: string };
+        if (!response.ok || !result.user) throw new Error(result.error || "Unable to verify your sign-in.");
+        return result.user;
+      })
+      .then((authenticatedUser) => {
+        if (!active || !authenticatedUser) return;
+        setUser(authenticatedUser);
+        if (pathname === "/settings" && authenticatedUser.role !== "admin") router.replace("/dashboard");
+      })
+      .catch((error: unknown) => {
+        if (active) setAuthError(error instanceof Error ? error.message : "Unable to verify your sign-in.");
+      })
+      .finally(() => { if (active) setAuthLoading(false); });
+    return () => { active = false; };
+  }, [pathname, router]);
+
+  const handleSignOut = async () => {
+    setAuthError("");
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Unable to sign out. Please try again.");
+      router.replace("/login");
+      router.refresh();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to sign out.");
+    }
+  };
+
+  if (authLoading || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <p role={authError ? "alert" : "status"} className="text-sm text-slate-500">{authError || "Checking your secure clinic session..."}</p>
+      </div>
+    );
+  }
+
+  const initials = user.name.split(/\s+/).slice(-2).map((part) => part[0]).join("").toUpperCase();
+  const displayName = user.name.startsWith("Dr.") ? user.name : `Dr. ${user.name}`;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -111,7 +162,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
-          {navigation.map((item) => {
+          {[...navigation, ...(user.role === "admin" ? [{ name: "Settings", href: "/settings", icon: Settings }] : [])].map((item) => {
             const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
               <Link
@@ -141,11 +192,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="absolute bottom-0 left-0 right-0 px-3 py-3 border-t border-slate-700 bg-slate-900">
           <div className="flex items-center gap-3 px-2">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center text-xs font-bold">
-              PS
+              {initials}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-200 truncate">Dr. Priya Sharma</p>
-              <p className="text-[11px] text-slate-500">General Medicine</p>
+              <p className="text-sm font-medium text-slate-200 truncate">{displayName}</p>
+              <p className="text-[11px] capitalize text-slate-500">{user.role === "doctor" ? user.specialization || user.role : user.role}</p>
             </div>
           </div>
         </div>
@@ -188,7 +239,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
                 >
                   <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center text-[11px] font-bold text-white">
-                    PS
+                    {initials}
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden sm:block" />
                 </button>
@@ -197,19 +248,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     <div className="fixed inset-0 z-10" onClick={() => setProfileDropdown(false)} />
                     <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl border border-slate-200 shadow-xl z-20 py-2">
                       <div className="px-4 py-2 border-b border-slate-100">
-                        <p className="text-sm font-semibold text-slate-800">Dr. Priya Sharma</p>
-                        <p className="text-xs text-slate-500">priya.sharma@clinicos.in</p>
+                        <p className="text-sm font-semibold text-slate-800">{displayName}</p>
+                        <p className="text-xs text-slate-500">{user.loginId}</p>
+                        <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-emerald-700">{user.role === "admin" ? "Administrator" : user.role}</p>
                       </div>
                       <div className="py-1">
-                        <button className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
+                        <Link href="/profile" onClick={() => setProfileDropdown(false)} className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
                           <User className="w-4 h-4" /> My Profile
-                        </button>
-                        <button className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
+                        </Link>
+                        {user.role === "admin" && <Link href="/settings" onClick={() => setProfileDropdown(false)} className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
                           <Settings className="w-4 h-4" /> Settings
-                        </button>
+                        </Link>}
                       </div>
                       <div className="border-t border-slate-100 py-1">
-                        <button className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                        <button onClick={() => void handleSignOut()} className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                           <LogOut className="w-4 h-4" /> Sign Out
                         </button>
                       </div>
@@ -219,6 +271,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           </div>
+          {authError && <p role="alert" className="absolute right-4 top-full mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{authError}</p>}
         </header>
 
         {/* Page content */}
@@ -227,4 +280,3 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import {
   CalendarDays,
@@ -11,19 +11,13 @@ import {
   Clock,
   UserPlus,
   Activity,
-  Stethoscope,
   Pill,
-  ClipboardList,
-  ArrowRight,
   AlertTriangle,
   CheckCircle2,
   Timer,
   Mic,
   ChevronRight,
   Package,
-  BarChart3,
-  Heart,
-  Thermometer,
   FileText,
 } from "lucide-react";
 import {
@@ -49,11 +43,8 @@ import {
   drugs,
   patients,
   invoices,
-  dailyPatientFlow,
 } from "@/lib/mock-data";
 import AppLayout from "@/components/layout/app-layout";
-
-const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
 const paymentModes = [
   { name: "UPI", value: 40, color: "#8b5cf6" },
@@ -63,18 +54,13 @@ const paymentModes = [
 ];
 
 export default function DashboardPage() {
-  const [currentDateStr, setCurrentDateStr] = useState("Monday, 2 November 2026");
-
-  useEffect(() => {
-    setCurrentDateStr(
-      new Date().toLocaleDateString("en-IN", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
-    );
-  }, []);
+  const [currentDateStr] = useState(() => new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  }));
 
   const todayAppointments = appointments;
   const waitingCount = opdQueue.filter((q) => q.status === "waiting").length;
@@ -155,7 +141,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              Welcome back, Dr. Priya Sharma • {currentDateStr}
+              Your clinic at a glance • {currentDateStr}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -557,4 +543,3 @@ export default function DashboardPage() {
     </AppLayout>
   );
 }
-

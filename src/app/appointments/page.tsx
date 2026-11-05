@@ -18,17 +18,18 @@ import {
   CircleDot,
   UserX,
   X,
-  Phone,
-  User,
   Stethoscope,
   Building2,
   FileText,
   Calendar,
 } from "lucide-react";
 import { appointments, patients, users } from "@/lib/mock-data";
+import type { Patient, User } from "@/lib/types";
 import type { Appointment, AppointmentStatus, AppointmentType } from "@/lib/types";
-import { cn, getStatusColor, getInitials, formatDate } from "@/lib/utils";
+import { cn, getStatusColor, getInitials } from "@/lib/utils";
 import AppLayout from "@/components/layout/app-layout";
+
+const todayDateString = new Date().toISOString().split("T")[0];
 
 // ---- Time slots for new appointment modal ----
 const TIME_SLOTS = [
@@ -52,8 +53,6 @@ const STATUSES: { label: string; value: string }[] = [
   { label: "Cancelled", value: "cancelled" },
   { label: "No Show", value: "no-show" },
 ];
-
-const doctors = users.filter((u) => u.role === "doctor");
 
 // ---- Helper: avatar bg colors ----
 const AVATAR_COLORS = [
@@ -97,18 +96,31 @@ function statusBadge(status: AppointmentStatus) {
 // ============================================================
 // New Appointment Modal
 // ============================================================
-function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewAppointmentModal({
+  open,
+  onClose,
+  patients,
+  appointments,
+  doctors,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  patients: Patient[];
+  appointments: Appointment[];
+  doctors: User[];
+  onCreated: (appointment: Appointment) => void;
+}) {
   const [search, setSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [selectedDoctor, setSelectedDoctor] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
-  const [selectedDate, setSelectedDate] = useState("2026-11-02");
-  useEffect(() => {
-    setSelectedDate(new Date().toISOString().split("T")[0]);
-  }, []);
+  const [selectedDate, setSelectedDate] = useState(todayDateString);
   const [selectedSlot, setSelectedSlot] = useState("");
   const [appointmentType, setAppointmentType] = useState<AppointmentType>("scheduled");
   const [complaint, setComplaint] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const filteredPatients = useMemo(() => {
     if (!search.trim()) return [];
@@ -119,7 +131,7 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
         p.phone.includes(q) ||
         p.uhid.toLowerCase().includes(q)
     ).slice(0, 5);
-  }, [search]);
+  }, [patients, search]);
 
   const patient = patients.find((p) => p.id === selectedPatient);
 
@@ -128,7 +140,7 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
     return appointments
       .filter((a) => a.doctorId === selectedDoctor && a.date === selectedDate && a.status !== "cancelled")
       .map((a) => a.timeSlot);
-  }, [selectedDoctor, selectedDate]);
+  }, [appointments, selectedDoctor, selectedDate]);
 
   // When doctor changes, auto-select department
   const handleDoctorChange = (doctorId: string) => {
@@ -137,15 +149,44 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
     if (doc?.specialization) setSelectedDept(doc.specialization);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedPatient || !selectedDoctor || !selectedSlot) {
-      alert("Please fill in all required fields: Patient, Doctor, and Time Slot.");
+      setError("Please select a patient, doctor, and time slot.");
       return;
     }
-    alert(
-      `✅ Appointment Created!\n\nPatient: ${patient?.name}\nDoctor: ${doctors.find((d) => d.id === selectedDoctor)?.name}\nDate: ${selectedDate}\nSlot: ${selectedSlot}\nType: ${appointmentType}\nComplaint: ${complaint || "—"}`
-    );
-    onClose();
+
+    setError("");
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: selectedPatient,
+          doctorId: selectedDoctor,
+          date: selectedDate,
+          timeSlot: selectedSlot,
+          type: appointmentType,
+          chiefComplaint: complaint,
+        }),
+      });
+      const result = await response.json() as Appointment | { error?: string };
+
+      if (!response.ok || !("id" in result)) {
+        throw new Error("error" in result ? result.error : "Unable to create appointment.");
+      }
+
+      onCreated(result);
+      onClose();
+    } catch (submissionError) {
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : "Unable to create appointment. Please try again.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (!open) return null;
@@ -165,6 +206,11 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
         </div>
 
         <div className="p-6 space-y-6">
+          {error && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
           {/* Patient Search */}
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Patient *</label>
@@ -175,7 +221,10 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
                   type="text"
                   placeholder="Search by name, phone, or UHID..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setError("");
+                  }}
                   className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 outline-none"
                 />
                 {filteredPatients.length > 0 && (
@@ -321,12 +370,12 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-          <button onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors">
+          <button type="button" onClick={onClose} disabled={isSaving} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={handleSubmit} className="px-6 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+          <button onClick={handleSubmit} disabled={isSaving} className="px-6 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-60">
             <Plus className="w-4 h-4" />
-            Book Appointment
+            {isSaving ? "Booking..." : "Book Appointment"}
           </button>
         </div>
       </div>
@@ -339,35 +388,77 @@ function NewAppointmentModal({ open, onClose }: { open: boolean; onClose: () => 
 // ============================================================
 export default function AppointmentsPage() {
   const [data, setData] = useState<Appointment[]>(appointments);
+  const [patientRecords, setPatientRecords] = useState<Patient[]>(patients);
+  const [doctors, setDoctors] = useState<User[]>(users.filter((user) => user.role === "doctor"));
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDept, setFilterDept] = useState("All Departments");
   const [filterDoctor, setFilterDoctor] = useState("All Doctors");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [filterDate, setFilterDate] = useState("2026-11-02");
-  const [todayText, setTodayText] = useState("02 Nov 2026");
+  const [filterDate, setFilterDate] = useState(todayDateString);
   const [showModal, setShowModal] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    setFilterDate(new Date().toISOString().split("T")[0]);
-    setTodayText(formatDate(new Date()));
+    let active = true;
+    Promise.all([
+      fetch("/api/appointments").then(async (response) => {
+        const result = await response.json() as Appointment[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) {
+          throw new Error("error" in result ? result.error : "Unable to load appointments.");
+        }
+        return result;
+      }),
+      fetch("/api/patients").then(async (response) => {
+        const result = await response.json() as Patient[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) {
+          throw new Error("error" in result ? result.error : "Unable to load patients.");
+        }
+        return result;
+      }),
+      fetch("/api/doctors").then(async (response) => {
+        const result = await response.json() as User[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) {
+          throw new Error("error" in result ? result.error : "Unable to load doctors.");
+        }
+        return result;
+      }),
+    ])
+      .then(([appointmentsFromDatabase, patientsFromDatabase, doctorsFromDatabase]) => {
+        if (!active) return;
+        setData(appointmentsFromDatabase);
+        setPatientRecords(patientsFromDatabase);
+        setDoctors(doctorsFromDatabase);
+        setLoadError("");
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load scheduling data.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   // ---- computed stats ----
   const stats = useMemo(() => {
+    const selectedDateAppointments = data.filter((appointment) => appointment.date === filterDate);
     return {
-      total: data.length,
-      completed: data.filter((a) => a.status === "completed").length,
-      inProgress: data.filter((a) => a.status === "in-consultation").length,
-      waiting: data.filter((a) => a.status === "waiting").length,
-      upcoming: data.filter((a) => a.status === "scheduled").length,
-      noShow: data.filter((a) => a.status === "no-show").length,
+      total: selectedDateAppointments.length,
+      completed: selectedDateAppointments.filter((a) => a.status === "completed").length,
+      inProgress: selectedDateAppointments.filter((a) => a.status === "in-consultation").length,
+      waiting: selectedDateAppointments.filter((a) => a.status === "waiting").length,
+      upcoming: selectedDateAppointments.filter((a) => a.status === "scheduled").length,
+      noShow: selectedDateAppointments.filter((a) => a.status === "no-show").length,
     };
-  }, [data]);
+  }, [data, filterDate]);
 
   // ---- filtered list ----
   const filtered = useMemo(() => {
     return data.filter((a) => {
       const q = searchQuery.toLowerCase();
+      const matchDate = a.date === filterDate;
       const matchSearch =
         !q ||
         a.patientName.toLowerCase().includes(q) ||
@@ -377,21 +468,32 @@ export default function AppointmentsPage() {
       const matchDept = filterDept === "All Departments" || a.department === filterDept;
       const matchDoc = filterDoctor === "All Doctors" || a.doctorId === filterDoctor;
       const matchStatus = filterStatus === "all" || a.status === filterStatus;
-      return matchSearch && matchDept && matchDoc && matchStatus;
+      return matchDate && matchSearch && matchDept && matchDoc && matchStatus;
     });
-  }, [data, searchQuery, filterDept, filterDoctor, filterStatus]);
+  }, [data, filterDate, searchQuery, filterDept, filterDoctor, filterStatus]);
 
   // ---- actions ----
-  const handleCheckIn = (id: string) => {
-    setData((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: "waiting" as AppointmentStatus } : a))
-    );
+  const handleStatusChange = async (id: string, status: AppointmentStatus) => {
+    try {
+      const response = await fetch("/api/appointments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      const result = await response.json() as Appointment | { error?: string };
+      if (!response.ok || !("id" in result)) {
+        throw new Error("error" in result ? result.error : "Unable to update appointment.");
+      }
+      setData((prev) => prev.map((appointment) => appointment.id === id ? result : appointment));
+      setLoadError("");
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Unable to update appointment.");
+    }
   };
+  const handleCheckIn = (id: string) => handleStatusChange(id, "waiting");
   const handleCancel = (id: string) => {
     if (confirm("Are you sure you want to cancel this appointment?")) {
-      setData((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, status: "cancelled" as AppointmentStatus } : a))
-      );
+      void handleStatusChange(id, "cancelled");
     }
   };
   const handleView = (a: Appointment) => {
@@ -412,6 +514,11 @@ export default function AppointmentsPage() {
   return (
     <AppLayout>
       <div className="space-y-6">
+          {loadError && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {loadError}
+            </div>
+          )}
           {/* ── Header ── */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -420,7 +527,7 @@ export default function AppointmentsPage() {
                 Appointments
               </h1>
               <p className="text-sm text-slate-500 mt-0.5">
-                {todayText} · {data.length} appointments today
+                {filterDate} · {stats.total} appointments
               </p>
             </div>
             <button
@@ -645,7 +752,17 @@ export default function AppointmentsPage() {
           </div>
 
           {/* Modal */}
-          <NewAppointmentModal open={showModal} onClose={() => setShowModal(false)} />
+          <NewAppointmentModal
+            open={showModal}
+            onClose={() => setShowModal(false)}
+            patients={patientRecords}
+            appointments={data}
+            doctors={doctors}
+            onCreated={(appointment) => {
+              setData((current) => [appointment, ...current]);
+              setFilterDate(appointment.date);
+            }}
+          />
         </div>
       </AppLayout>
     );

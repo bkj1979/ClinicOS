@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+__pycache__/
 /.pnp
 .pnp.*
 .yarn/*
@@ -12,6 +13,7 @@
 
 # testing
 /coverage
+/prisma/*.db
 
 # next.js
 /.next/
