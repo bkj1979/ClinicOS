@@ -9,10 +9,10 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const token = getSessionToken(request);
-  const database = openAuthDatabase();
+  const database = await openAuthDatabase();
   try {
     if (token) {
-      database.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(hashSessionToken(token));
+      await database.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(hashSessionToken(token));
     }
     return Response.json(
       { signedOut: true },

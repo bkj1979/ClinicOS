@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
 import type { Patient } from "@/lib/types";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
+import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
-
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 
 interface PatientRow {
   id: string;
@@ -101,12 +98,12 @@ function calculateAge(dob: string): number {
 }
 
 export async function GET(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   try {
-    const database = new DatabaseSync(databasePath, { readOnly: true });
+    const database = await openClinicDatabase();
 
     try {
-      const rows = database
+      const rows = await database
         .prepare("SELECT * FROM patients ORDER BY name COLLATE NOCASE")
         .all() as unknown as PatientRow[];
       return Response.json(rows.map(toPatient));
@@ -120,7 +117,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsedBody: unknown;
 
   try {
@@ -204,14 +201,14 @@ export async function POST(request: Request) {
     ? { provider: insuranceProvider, policyNo: insurancePolicyNo, validTill: insuranceValidTill }
     : undefined;
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    database.exec("BEGIN IMMEDIATE");
+    database = await openClinicDatabase();
+    await database.exec("PRAGMA foreign_keys = ON");
+    await database.exec("BEGIN IMMEDIATE");
 
     try {
-      const maxUhid = database
+      const maxUhid = await database
         .prepare("SELECT COALESCE(MAX(CAST(SUBSTR(uhid, 4) AS INTEGER)), 100000) AS max_id FROM patients")
         .get() as { max_id: number };
       const patient: Patient = {
@@ -234,7 +231,7 @@ export async function POST(request: Request) {
         totalVisits: 0,
       };
 
-      database.prepare(`
+      await database.prepare(`
         INSERT INTO patients (
           id, uhid, abha_id, name, phone, email, gender, dob, age, blood_group,
           address_json, emergency_contact_json, allergies_json, chronic_conditions_json,
@@ -261,14 +258,14 @@ export async function POST(request: Request) {
         patient.totalVisits,
       );
 
-      database.exec("COMMIT");
+      await database.exec("COMMIT");
       return Response.json(patient, { status: 201 });
     } catch (error) {
-      database.exec("ROLLBACK");
+      await database.exec("ROLLBACK");
       throw error;
     }
   } catch (error) {
-    console.error("Failed to register patient in SQLite:", error);
+    console.error("Failed to register patient in the database:", error);
     return Response.json({ error: "Unable to register patient. Please check the local database and try again." }, { status: 500 });
   } finally {
     database?.close();

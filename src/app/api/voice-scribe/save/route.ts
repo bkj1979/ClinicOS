@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
+import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
 
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 const soapKeys = ["subjective", "objective", "assessment", "plan"] as const;
 type SoapNotes = Record<(typeof soapKeys)[number], string>;
 
@@ -24,7 +22,7 @@ function text(value: unknown): string {
 }
 
 async function saveEncounter(request: Request, updateExisting: boolean) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsed: unknown;
   try {
     parsed = await request.json();
@@ -73,17 +71,17 @@ async function saveEncounter(request: Request, updateExisting: boolean) {
     plan: text(notesObject.plan),
   };
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    const patient = database.prepare(
+    database = await openClinicDatabase();
+    await database.exec("PRAGMA foreign_keys = ON");
+    const patient = await database.prepare(
       "SELECT id, name FROM patients WHERE id = ?",
     ).get(patientId) as { id: string; name: string } | undefined;
     if (!patient) {
       return Response.json({ error: "Selected patient was not found in the local registry." }, { status: 404 });
     }
-    const doctor = database.prepare(`
+    const doctor = await database.prepare(`
       SELECT id, name, specialization
       FROM users
       WHERE id = 'u1' AND role = 'doctor' AND is_active = 1
@@ -95,7 +93,7 @@ async function saveEncounter(request: Request, updateExisting: boolean) {
     const now = new Date();
     const date = now.toISOString().slice(0, 10);
     if (updateExisting) {
-      const existing = database.prepare(
+      const existing = await database.prepare(
         "SELECT patient_id FROM encounters WHERE id = ? AND status = 'in-progress'",
       ).get(encounterId) as { patient_id: string } | undefined;
       if (!existing) {
@@ -104,7 +102,7 @@ async function saveEncounter(request: Request, updateExisting: boolean) {
       if (existing.patient_id !== patient.id) {
         return Response.json({ error: "A saved draft cannot be moved to another patient." }, { status: 409 });
       }
-      database.prepare(`
+      await database.prepare(`
         UPDATE encounters
         SET patient_name = ?, date = ?, department = ?, type = ?, chief_complaint = ?,
             notes_json = ?, ai_transcript = ?, ai_soap_notes = ?
@@ -124,7 +122,7 @@ async function saveEncounter(request: Request, updateExisting: boolean) {
     }
 
     const newEncounterId = randomUUID();
-    database.prepare(`
+    await database.prepare(`
       INSERT INTO encounters (
         id, patient_id, patient_name, doctor_id, doctor_name, date, department,
         type, chief_complaint, vitals_json, notes_json, diagnoses_json,
@@ -163,7 +161,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsed: unknown;
   try {
     parsed = await request.json();
@@ -178,10 +176,10 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "Encounter ID is required." }, { status: 400 });
   }
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    const result = database.prepare(
+    database = await openClinicDatabase();
+    const result = await database.prepare(
       "DELETE FROM encounters WHERE id = ? AND status = 'in-progress'",
     ).run(encounterId);
     if (result.changes === 0) {

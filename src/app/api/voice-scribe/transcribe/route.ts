@@ -15,7 +15,7 @@ const allowedAudioTypes = new Set([
 ]);
 
 export async function POST(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let formData: FormData;
   try {
     formData = await request.formData();

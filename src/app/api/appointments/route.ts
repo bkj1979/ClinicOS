@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
 import type { Appointment, AppointmentStatus, AppointmentType } from "@/lib/types";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
+import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
 
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 const timeSlots = new Set([
   "09:00 AM", "09:15 AM", "09:30 AM", "09:45 AM",
   "10:00 AM", "10:15 AM", "10:30 AM", "10:45 AM",
@@ -84,17 +82,17 @@ function validDate(value: string): boolean {
 }
 
 export async function GET(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
-  let database: DatabaseSync | undefined;
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
+  let database: ClinicDatabase | undefined;
 
   try {
-    database = new DatabaseSync(databasePath, { readOnly: true });
-    const rows = database
+    database = await openClinicDatabase();
+    const rows = await database
       .prepare("SELECT * FROM appointments ORDER BY date DESC, time_slot ASC")
       .all() as unknown as AppointmentRow[];
     return Response.json(rows.map(toAppointment));
   } catch (error) {
-    console.error("Failed to load appointments from SQLite:", error);
+    console.error("Failed to load appointments from the database:", error);
     return Response.json({ error: "Unable to load appointments from the local database." }, { status: 500 });
   } finally {
     database?.close();
@@ -102,7 +100,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsedBody: unknown;
 
   try {
@@ -139,38 +137,38 @@ export async function POST(request: Request) {
     return Response.json({ error: "Chief complaint must be 1000 characters or fewer." }, { status: 400 });
   }
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    database.exec("BEGIN IMMEDIATE");
+    database = await openClinicDatabase();
+    await database.exec("PRAGMA foreign_keys = ON");
+    await database.exec("BEGIN IMMEDIATE");
 
     try {
-      const patient = database.prepare(
+      const patient = await database.prepare(
         "SELECT id, name, phone, age, gender FROM patients WHERE id = ?",
       ).get(patientId) as { id: string; name: string; phone: string; age: number; gender: string } | undefined;
       if (!patient) {
-        database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         return Response.json({ error: "The selected patient was not found. Refresh the patient list and try again." }, { status: 404 });
       }
 
-      const doctor = database.prepare(
+      const doctor = await database.prepare(
         "SELECT id, name, specialization FROM users WHERE id = ? AND role = 'doctor' AND is_active = 1",
       ).get(doctorId) as { id: string; name: string; specialization: string | null } | undefined;
       if (!doctor) {
-        database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         return Response.json({ error: "The selected doctor is not available." }, { status: 404 });
       }
 
-      const occupiedSlot = database.prepare(
+      const occupiedSlot = await database.prepare(
         "SELECT 1 FROM appointments WHERE doctor_id = ? AND date = ? AND time_slot = ? AND status <> 'cancelled'",
       ).get(doctor.id, date, timeSlot);
       if (occupiedSlot) {
-        database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         return Response.json({ error: "That time slot has already been booked for this doctor. Choose another slot." }, { status: 409 });
       }
 
-      const nextToken = database.prepare(
+      const nextToken = await database.prepare(
         "SELECT COALESCE(MAX(CAST(SUBSTR(token_number, 2) AS INTEGER)), 0) + 1 AS next_token FROM appointments WHERE date = ? AND token_number GLOB 'T[0-9]*'",
       ).get(date) as { next_token: number };
       const doctorName = doctor.name;
@@ -193,7 +191,7 @@ export async function POST(request: Request) {
         createdAt: new Date().toISOString(),
       };
 
-      database.prepare(`
+      await database.prepare(`
         INSERT INTO appointments (
           id, patient_id, patient_name, patient_phone, patient_age, patient_gender,
           doctor_id, doctor_name, department, date, time_slot, type, status,
@@ -219,14 +217,14 @@ export async function POST(request: Request) {
         appointment.createdAt,
       );
 
-      database.exec("COMMIT");
+      await database.exec("COMMIT");
       return Response.json(appointment, { status: 201 });
     } catch (error) {
-      database.exec("ROLLBACK");
+      await database.exec("ROLLBACK");
       throw error;
     }
   } catch (error) {
-    console.error("Failed to create appointment in SQLite:", error);
+    console.error("Failed to create appointment in the database:", error);
     return Response.json({ error: "Unable to create the appointment. Please try again." }, { status: 500 });
   } finally {
     database?.close();
@@ -234,7 +232,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsedBody: unknown;
 
   try {
@@ -254,17 +252,17 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "A valid appointment ID and status are required." }, { status: 400 });
   }
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.prepare("UPDATE appointments SET status = ? WHERE id = ?").run(status, id);
-    const row = database.prepare("SELECT * FROM appointments WHERE id = ?").get(id) as AppointmentRow | undefined;
+    database = await openClinicDatabase();
+    await database.prepare("UPDATE appointments SET status = ? WHERE id = ?").run(status, id);
+    const row = await database.prepare("SELECT * FROM appointments WHERE id = ?").get(id) as AppointmentRow | undefined;
     if (!row) {
       return Response.json({ error: "Appointment not found." }, { status: 404 });
     }
     return Response.json(toAppointment(row));
   } catch (error) {
-    console.error("Failed to update appointment in SQLite:", error);
+    console.error("Failed to update appointment in the database:", error);
     return Response.json({ error: "Unable to update the appointment. Please try again." }, { status: 500 });
   } finally {
     database?.close();

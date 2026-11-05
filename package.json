@@ -2,6 +2,9 @@
   "name": "clinic-os",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,6 +15,7 @@
     "voice-scribe:local": "python -m uvicorn scripts.voice_scribe_local:app --host 127.0.0.1 --port 8765"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "@prisma/client": "^7.10.1",
     "@radix-ui/react-accordion": "^1.3.1",
     "@radix-ui/react-alert-dialog": "^1.2.1",

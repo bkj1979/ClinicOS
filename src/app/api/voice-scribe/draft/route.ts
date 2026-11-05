@@ -1,9 +1,7 @@
-import { DatabaseSync } from "node:sqlite";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
-import { join } from "node:path";
+import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 
 interface DraftBody {
   transcript?: unknown;
@@ -70,7 +68,7 @@ function keepTranscriptGroundedText(value: string, allowedTokens: Set<string>): 
 }
 
 export async function POST(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsed: unknown;
   try {
     parsed = await request.json();
@@ -97,10 +95,10 @@ export async function POST(request: Request) {
   }
 
   let patientRecord: PatientContext & { id: string; name: string };
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath, { readOnly: true });
-    const row = database.prepare(
+    database = await openClinicDatabase();
+    const row = await database.prepare(
       "SELECT id, name, age, gender FROM patients WHERE id = ?",
     ).get(requiredText(patient.id)) as { id: string; name: string; age: number; gender: string } | undefined;
     if (!row) {

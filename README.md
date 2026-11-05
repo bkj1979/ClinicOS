@@ -96,6 +96,35 @@ ClinicOS stores login IDs, roles, and salted password hashes in the SQLite `auth
 
 Administrators can add staff from **Settings → Users & Roles → Add User**. Enter the name and select a role; the login ID is generated from the name (for example, **Dr Hitendra Pandey** becomes `hitendra.pandey@clinicos.in`). After creating the account, choose **Set password** in the account list. New accounts are saved in both `users` and `auth_users`.
 
+#### Deploy on Vercel with Turso
+
+Vercel functions do not share a persistent local SQLite file. ClinicOS uses the local `prisma/clinic-os.db` file when running outside Vercel and switches to Turso when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are configured. Set both variables in the Vercel project's **Settings → Environment Variables** for each deployment environment, then redeploy.
+
+On Windows, the official Turso CLI requires WSL. In a Linux/WSL shell, install and sign in to the CLI, then import the existing ClinicOS database:
+
+```bash
+curl -sSfL https://get.tur.so/install.sh | bash
+turso auth login
+turso db import "/mnt/c/path/to/clinic-os/prisma/clinic-os.db"
+```
+
+Replace the example path with the actual WSL path to your local database. The import creates a hosted database from the local SQLite file; use its resulting database name in the following commands:
+
+```bash
+turso db show <database-name> --url
+turso db tokens create <database-name>
+```
+
+Copy the database URL and token into Vercel as `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Do not commit the token or put it in client-side environment variables. Importing the local database uploads all of its records, including patient/clinical records; verify you are authorized to transfer them before importing. To deploy only demo data, intentionally reset the local database with `npm run db:seed` before import; this deletes locally registered records.
+
+If the imported database still needs its first administrator password, generate a one-time deployment setup key locally:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+Set the generated value as the server-only Vercel environment variable `CLINICOS_SETUP_KEY`, redeploy, and open `/setup` on the deployed site. The setup page requires that key and a password of at least 12 characters. Remove `CLINICOS_SETUP_KEY` from Vercel after setup and redeploy. Existing accounts with configured passwords can sign in directly; this one-time key is not needed for normal sign-in.
+
 #### Configure optional Google sign-in
 
 Google sign-in is shown when all three server-only environment variables are configured. In Google Cloud Console, create an OAuth 2.0 **Web application** client and add the callback URI below to its authorized redirect URIs:

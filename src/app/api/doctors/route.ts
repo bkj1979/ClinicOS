@@ -17,11 +17,11 @@ interface DoctorRow {
 }
 
 export async function GET(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
 
-  const database = openAuthDatabase();
+  const database = await openAuthDatabase();
   try {
-    const doctors = database.prepare(`
+    const doctors = await database.prepare(`
       SELECT id, name, email, role, phone, specialization,
         registration_no AS registrationNo, avatar, is_active AS isActive,
         centres_json AS centresJson

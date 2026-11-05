@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const user = getAuthenticatedUser(request);
+    const user = await getAuthenticatedUser(request);
     if (!user) return unauthorizedResponse();
     return Response.json({ user }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

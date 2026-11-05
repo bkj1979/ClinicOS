@@ -14,6 +14,8 @@ export default function SetupPage() {
   const router = useRouter();
   const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const [passwords, setPasswords] = useState<string[]>([]);
+  const [setupKey, setSetupKey] = useState("");
+  const [setupKeyRequired, setSetupKeyRequired] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -23,13 +25,16 @@ export default function SetupPage() {
     let active = true;
     fetch("/api/auth/setup", { cache: "no-store" })
       .then(async (response) => {
-        const result = await response.json() as { required?: boolean; admins?: AdminAccount[]; error?: string };
+        const result = await response.json() as { required?: boolean; admins?: AdminAccount[]; setupKeyRequired?: boolean; error?: string };
         if (!response.ok) throw new Error(result.error || "Unable to load account setup.");
         if (!result.required) {
           router.replace("/login");
           return;
         }
-        if (active) setAdmins(result.admins || []);
+        if (active) {
+          setAdmins(result.admins || []);
+          setSetupKeyRequired(result.setupKeyRequired === true);
+        }
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : "Unable to load account setup.");
@@ -46,7 +51,10 @@ export default function SetupPage() {
       const response = await fetch("/api/auth/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credentials: admins.map((admin, index) => ({ loginId: admin.loginId, password: passwords[index] })) }),
+        body: JSON.stringify({
+          credentials: admins.map((admin, index) => ({ loginId: admin.loginId, password: passwords[index] })),
+          ...(setupKeyRequired ? { setupKey } : {}),
+        }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Unable to save administrator passwords.");
@@ -71,6 +79,12 @@ export default function SetupPage() {
           <p role="alert" className="mt-8 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
         ) : (
           <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+            {setupKeyRequired && (
+              <div>
+                <label htmlFor="setup-key" className="mb-2 block text-sm font-medium text-slate-700">One-time deployment setup key</label>
+                <input id="setup-key" type="password" autoComplete="off" required value={setupKey} onChange={(event) => setSetupKey(event.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" />
+              </div>
+            )}
             {admins.map((admin, index) => (
               <div key={admin.loginId} className="rounded-2xl border border-slate-200 p-4">
                 <p className="font-semibold text-slate-900">{admin.name}</p>

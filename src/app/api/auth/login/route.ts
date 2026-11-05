@@ -25,9 +25,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Enter your login ID and password." }, { status: 400 });
   }
 
-  const database = openAuthDatabase();
+  const database = await openAuthDatabase();
   try {
-    const account = database.prepare(`
+    const account = await database.prepare(`
       SELECT au.id, au.password_hash AS passwordHash
       FROM auth_users au JOIN users u ON u.id = au.user_id
       WHERE au.login_id = ? AND au.is_active = 1 AND u.is_active = 1
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "The login ID or password is incorrect." }, { status: 401 });
     }
 
-    const session = createSession(database, account.id);
+    const session = await createSession(database, account.id);
     return Response.json(
       { signedIn: true },
       { headers: { "Set-Cookie": sessionCookie(session.token, new URL(request.url).protocol === "https:") } },

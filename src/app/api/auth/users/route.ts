@@ -14,12 +14,12 @@ const accountRoles = ["admin", "doctor", "receptionist", "pharmacist", "nurse", 
 
 export async function GET(request: Request) {
   try {
-    const user = getAuthenticatedUser(request);
+    const user = await getAuthenticatedUser(request);
     if (!user) return unauthorizedResponse();
     if (user.role !== "admin") return forbiddenResponse();
-    const database = openAuthDatabase();
+    const database = await openAuthDatabase();
     try {
-      const users = database.prepare(`
+      const users = await database.prepare(`
         SELECT au.user_id AS userId, u.name, au.login_id AS loginId, au.role,
           u.phone, u.specialization, au.is_active AS isActive,
           au.password_hash IS NOT NULL AS passwordConfigured
@@ -57,10 +57,10 @@ export async function POST(request: Request) {
     specialization?: unknown;
     registrationNo?: unknown;
   };
-  let database: ReturnType<typeof openAuthDatabase> | undefined;
+  let database: Awaited<ReturnType<typeof openAuthDatabase>> | undefined;
 
   try {
-    const user = getAuthenticatedUser(request);
+    const user = await getAuthenticatedUser(request);
     if (!user) return unauthorizedResponse();
     if (user.role !== "admin") return forbiddenResponse();
 
@@ -81,19 +81,19 @@ export async function POST(request: Request) {
         return Response.json({ error: "One or more account details exceed the allowed length." }, { status: 400 });
       }
 
-      database = openAuthDatabase();
-      database.exec("BEGIN IMMEDIATE");
+      database = await openAuthDatabase();
+      await database.exec("BEGIN IMMEDIATE");
       try {
-        const existing = database.prepare(
+        const existing = await database.prepare(
           "SELECT 1 FROM users WHERE lower(email) = ?",
         ).get(loginId);
         if (existing) {
-          database.exec("ROLLBACK");
+          await database.exec("ROLLBACK");
           return Response.json({ error: "That login ID is already in use." }, { status: 409 });
         }
         const userId = randomUUID();
         const authUserId = `auth_${userId}`;
-        database.prepare(`
+        await database.prepare(`
           INSERT INTO users
             (id, name, email, role, phone, specialization, registration_no, is_active, centres_json)
           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -107,11 +107,11 @@ export async function POST(request: Request) {
           registrationNo || null,
           JSON.stringify(["c1"]),
         );
-        database.prepare(`
+        await database.prepare(`
           INSERT INTO auth_users (id, user_id, login_id, role, is_active)
           VALUES (?, ?, ?, ?, 1)
         `).run(authUserId, userId, loginId, role);
-        database.exec("COMMIT");
+        await database.exec("COMMIT");
         return Response.json({
           user: {
             userId,
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
           },
         }, { status: 201 });
       } catch (error) {
-        if (database.isTransaction) database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         throw error;
       }
     }
@@ -137,24 +137,24 @@ export async function POST(request: Request) {
   }
 
     const passwordHash = await hashPassword(password);
-    database = openAuthDatabase();
-    const target = database.prepare(
+    database = await openAuthDatabase();
+    const target = await database.prepare(
       "SELECT id FROM auth_users WHERE user_id = ? AND is_active = 1",
     ).get(userId) as { id: string } | undefined;
     if (!target) {
       return Response.json({ error: "Active user account not found." }, { status: 404 });
     }
-    const result = database.prepare(`
+    const result = await database.prepare(`
       UPDATE auth_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND is_active = 1
     `).run(passwordHash, userId);
     if (result.changes !== 1) throw new Error("The doctor account could not be updated.");
     const currentToken = getSessionToken(request);
     if (target.id === user.id && currentToken) {
-      database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ? AND token_hash <> ?")
+      await database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ? AND token_hash <> ?")
         .run(target.id, hashSessionToken(currentToken));
     } else {
-      database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ?").run(target.id);
+      await database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ?").run(target.id);
     }
     return Response.json({ updated: true });
   } catch (error) {

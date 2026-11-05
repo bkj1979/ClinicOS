@@ -91,9 +91,9 @@ export async function GET(request: Request) {
       return callbackRedirect(request, configuration, "/login?error=google_unverified");
     }
 
-    const database = openAuthDatabase();
+    const database = await openAuthDatabase();
     try {
-      const account = database.prepare(`
+      const account = await database.prepare(`
         SELECT au.id
         FROM auth_users au
         JOIN users u ON u.id = au.user_id
@@ -102,7 +102,7 @@ export async function GET(request: Request) {
       if (!account) {
         return callbackRedirect(request, configuration, "/login?error=google_account_not_found");
       }
-      const session = createSession(database, account.id);
+      const session = await createSession(database, account.id);
       return callbackRedirect(request, configuration, "/dashboard", session.token);
     } finally {
       database.close();

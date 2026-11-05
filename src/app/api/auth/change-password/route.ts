@@ -27,12 +27,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "The new password must contain at least 12 characters." }, { status: 400 });
   }
 
-  let database: ReturnType<typeof openAuthDatabase> | undefined;
+  let database: Awaited<ReturnType<typeof openAuthDatabase>> | undefined;
   try {
-    const user = getAuthenticatedUser(request);
+    const user = await getAuthenticatedUser(request);
     if (!user) return unauthorizedResponse();
-    database = openAuthDatabase();
-    const account = database.prepare(
+    database = await openAuthDatabase();
+    const account = await database.prepare(
       "SELECT password_hash AS passwordHash FROM auth_users WHERE id = ?",
     ).get(user.id) as { passwordHash: string | null } | undefined;
     if (!account?.passwordHash || !(await verifyPassword(currentPassword, account.passwordHash))) {
@@ -40,12 +40,12 @@ export async function POST(request: Request) {
     }
 
     const passwordHash = await hashPassword(newPassword);
-    database.prepare(`
+    await database.prepare(`
       UPDATE auth_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
     `).run(passwordHash, user.id);
     const token = getSessionToken(request);
     if (token) {
-      database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ? AND token_hash <> ?")
+      await database.prepare("DELETE FROM auth_sessions WHERE auth_user_id = ? AND token_hash <> ?")
         .run(user.id, hashSessionToken(token));
     }
     return Response.json({ updated: true });

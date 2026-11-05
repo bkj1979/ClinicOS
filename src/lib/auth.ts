@@ -1,22 +1,36 @@
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
-import { join } from "node:path";
 import type { AuthUser } from "./auth-types";
+import { isRemoteDatabaseConfigured, openClinicDatabase, type ClinicDatabase } from "./database";
 
 const scrypt = promisify(scryptCallback);
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 export const SESSION_COOKIE = "clinicos_session";
 export const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7;
+let remoteAuthSchemaPromise: Promise<void> | undefined;
 
-export function openAuthDatabase(): DatabaseSync {
-  const database = new DatabaseSync(databasePath);
-  ensureAuthSchema(database);
-  return database;
+export async function openAuthDatabase(): Promise<ClinicDatabase> {
+  const database = await openClinicDatabase();
+  try {
+    if (isRemoteDatabaseConfigured()) {
+      remoteAuthSchemaPromise ??= ensureAuthSchema(database);
+      try {
+        await remoteAuthSchemaPromise;
+      } catch (error) {
+        remoteAuthSchemaPromise = undefined;
+        throw error;
+      }
+    } else {
+      await ensureAuthSchema(database);
+    }
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
-export function ensureAuthSchema(database: DatabaseSync): void {
-  database.exec(`
+export async function ensureAuthSchema(database: ClinicDatabase): Promise<void> {
+  await database.exec(`
     CREATE TABLE IF NOT EXISTS auth_users (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
@@ -52,13 +66,13 @@ export function ensureAuthSchema(database: DatabaseSync): void {
       END;
   `);
 
-  const authTable = database.prepare(
+  const authTable = await database.prepare(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_users'",
   ).get() as { sql: string } | undefined;
-  if (authTable?.sql.includes("admin_doctor")) {
-    database.exec("PRAGMA foreign_keys = OFF");
+  if (!isRemoteDatabaseConfigured() && authTable?.sql.includes("admin_doctor")) {
+    await database.exec("PRAGMA foreign_keys = OFF");
     try {
-      database.exec(`
+      await database.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE auth_users_replacement (
           id TEXT PRIMARY KEY,
@@ -88,14 +102,14 @@ export function ensureAuthSchema(database: DatabaseSync): void {
         COMMIT;
       `);
     } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
+      await database.exec("ROLLBACK");
       throw error;
     } finally {
-      database.exec("PRAGMA foreign_keys = ON");
+      await database.exec("PRAGMA foreign_keys = ON");
     }
   }
 
-  database.prepare(`
+  await database.prepare(`
     INSERT INTO auth_users (id, user_id, login_id, role, is_active)
     SELECT 'auth_' || u.id, u.id, lower(u.email), u.role, u.is_active
     FROM users u
@@ -144,13 +158,13 @@ export function getSessionToken(request: Request): string | undefined {
   return requestCookie(request, SESSION_COOKIE);
 }
 
-export function createSession(database: DatabaseSync, authUserId: string): { token: string; expiresAt: Date } {
+export async function createSession(database: ClinicDatabase, authUserId: string): Promise<{ token: string; expiresAt: Date }> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000);
-  database.prepare(
+  await database.prepare(
     "INSERT INTO auth_sessions (token_hash, auth_user_id, expires_at) VALUES (?, ?, ?)",
   ).run(hashSessionToken(token), authUserId, expiresAt.toISOString());
-  database.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").run(new Date().toISOString());
+  await database.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").run(new Date().toISOString());
   return { token, expiresAt };
 }
 
@@ -162,13 +176,13 @@ export function expiredSessionCookie(secure: boolean): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
 }
 
-export function getAuthenticatedUser(request: Request): AuthUser | null {
+export async function getAuthenticatedUser(request: Request): Promise<AuthUser | null> {
   const token = getSessionToken(request);
   if (!token) return null;
 
-  const database = openAuthDatabase();
+  const database = await openAuthDatabase();
   try {
-    const user = database.prepare(`
+    const user = await database.prepare(`
       SELECT au.id, au.user_id AS userId, u.name, au.login_id AS loginId, au.role,
         u.phone, u.specialization
       FROM auth_sessions s
@@ -191,9 +205,9 @@ export function forbiddenResponse(): Response {
 }
 
 export async function isInitialSetupRequired(): Promise<boolean> {
-  const database = openAuthDatabase();
+  const database = await openAuthDatabase();
   try {
-    const result = database.prepare(`
+    const result = await database.prepare(`
       SELECT COUNT(*) AS remaining
       FROM auth_users
       WHERE role = 'admin' AND is_active = 1 AND password_hash IS NULL

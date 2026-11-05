@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
 import type { Patient } from "@/lib/types";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
+import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
 
-const databasePath = join(process.cwd(), "prisma", "clinic-os.db");
 const genders: Patient["gender"][] = ["Male", "Female", "Other"];
 const priorities = ["normal", "urgent", "emergency"] as const;
 type QueuePriority = (typeof priorities)[number];
@@ -76,13 +74,13 @@ function toQueuePatient(row: Record<string, unknown>): QueuePatient {
 }
 
 export async function GET(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
-  let database: DatabaseSync | undefined;
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
+  let database: ClinicDatabase | undefined;
 
   try {
-    database = new DatabaseSync(databasePath, { readOnly: true });
+    database = await openClinicDatabase();
     const today = new Date().toISOString().slice(0, 10);
-    const rows = database.prepare(`
+    const rows = await database.prepare(`
       SELECT queue.*, appointment.chief_complaint
       FROM opd_queue AS queue
       JOIN appointments AS appointment ON appointment.id = queue.appointment_id
@@ -99,7 +97,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsedBody: unknown;
 
   try {
@@ -143,25 +141,25 @@ export async function POST(request: Request) {
     return Response.json({ error: "Chief complaint must be 1000 characters or fewer." }, { status: 400 });
   }
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    database.exec("BEGIN IMMEDIATE");
+    database = await openClinicDatabase();
+    await database.exec("PRAGMA foreign_keys = ON");
+    await database.exec("BEGIN IMMEDIATE");
 
     try {
-      const doctor = database.prepare(`
+      const doctor = await database.prepare(`
         SELECT id, name, specialization
         FROM users
         WHERE id = ? AND role = 'doctor' AND is_active = 1
       `).get(doctorId) as { id: string; name: string; specialization: string | null } | undefined;
 
       if (!doctor) {
-        database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         return Response.json({ error: "The selected doctor is not available." }, { status: 404 });
       }
 
-      const matchingPatients = database.prepare(
+      const matchingPatients = await database.prepare(
         "SELECT id, name FROM patients WHERE phone = ?",
       ).all(phone) as { id: string; name: string }[];
       const existingPatient = matchingPatients.find(
@@ -169,7 +167,7 @@ export async function POST(request: Request) {
       );
 
       if (!existingPatient && matchingPatients.length > 0) {
-        database.exec("ROLLBACK");
+        await database.exec("ROLLBACK");
         return Response.json({
           error: "This phone number is already registered to another patient. Verify the number or select the existing patient from the patient registry.",
         }, { status: 409 });
@@ -183,12 +181,12 @@ export async function POST(request: Request) {
       if (existingPatient) {
         patientId = existingPatient.id;
       } else {
-        const maxUhid = database
+        const maxUhid = await database
           .prepare("SELECT COALESCE(MAX(CAST(SUBSTR(uhid, 4) AS INTEGER)), 100000) AS max_id FROM patients")
           .get() as { max_id: number };
         patientId = randomUUID();
         uhid = `COS${maxUhid.max_id + 1}`;
-        database.prepare(`
+        await database.prepare(`
           INSERT INTO patients (
             id, uhid, name, phone, gender, dob, age,
             allergies_json, chronic_conditions_json, registered_at, total_visits
@@ -205,7 +203,7 @@ export async function POST(request: Request) {
         );
       }
 
-      const tokenSequence = database.prepare(`
+      const tokenSequence = await database.prepare(`
         SELECT COALESCE(MAX(CAST(SUBSTR(token_number, 2) AS INTEGER)), 0) + 1 AS next_token
         FROM appointments
         WHERE date = ? AND token_number GLOB 'T[0-9]*'
@@ -214,7 +212,7 @@ export async function POST(request: Request) {
       const appointmentId = randomUUID();
       const queueId = randomUUID();
       const department = doctor.specialization || "General Medicine";
-      const patient = database.prepare(
+      const patient = await database.prepare(
         "SELECT name, phone, age, gender FROM patients WHERE id = ?",
       ).get(patientId) as { name: string; phone: string; age: number; gender: string };
       let slotTime = now;
@@ -228,14 +226,14 @@ export async function POST(request: Request) {
       });
       while (true) {
         timeSlot = formatTimeSlot.format(slotTime);
-        const occupied = database.prepare(`
+        const occupied = await database.prepare(`
           SELECT 1 FROM appointments
           WHERE doctor_id = ? AND date = ? AND time_slot = ? AND status <> 'cancelled'
         `).get(doctor.id, now.toISOString().slice(0, 10), timeSlot);
         if (!occupied) break;
         slotTime = new Date(slotTime.getTime() + 1000);
       }
-      const waitingAhead = database.prepare(`
+      const waitingAhead = await database.prepare(`
         SELECT COUNT(*) AS count
         FROM opd_queue
         WHERE doctor_id = ? AND status = 'waiting'
@@ -243,7 +241,7 @@ export async function POST(request: Request) {
       `).get(doctor.id, now.toISOString().slice(0, 10)) as { count: number };
       const estimatedWaitMinutes = waitingAhead.count * 15;
 
-      database.prepare(`
+      await database.prepare(`
         INSERT INTO appointments (
           id, patient_id, patient_name, patient_phone, patient_age, patient_gender,
           doctor_id, doctor_name, department, date, time_slot, type, status,
@@ -266,7 +264,7 @@ export async function POST(request: Request) {
         checkedInAt,
       );
 
-      database.prepare(`
+      await database.prepare(`
         INSERT INTO opd_queue (
           id, token_number, patient_id, patient_name, patient_age, patient_gender,
           appointment_id, doctor_id, doctor_name, department, type, status, priority,
@@ -288,7 +286,7 @@ export async function POST(request: Request) {
         estimatedWaitMinutes,
       );
 
-      database.exec("COMMIT");
+      await database.exec("COMMIT");
       return Response.json({
         id: queueId,
         tokenNumber,
@@ -310,11 +308,11 @@ export async function POST(request: Request) {
         uhid,
       }, { status: 201 });
     } catch (error) {
-      database.exec("ROLLBACK");
+      await database.exec("ROLLBACK");
       throw error;
     }
   } catch (error) {
-    console.error("Failed to register walk-in in SQLite:", error);
+    console.error("Failed to register walk-in in the database:", error);
     return Response.json({ error: "Unable to add this walk-in to the queue. Please check the database and try again." }, { status: 500 });
   } finally {
     database?.close();
@@ -322,7 +320,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  if (!getAuthenticatedUser(request)) return unauthorizedResponse();
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
   let parsedBody: unknown;
 
   try {
@@ -343,11 +341,11 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "A valid queue entry ID and status are required." }, { status: 400 });
   }
 
-  let database: DatabaseSync | undefined;
+  let database: ClinicDatabase | undefined;
   try {
-    database = new DatabaseSync(databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    const queueRow = database.prepare(
+    database = await openClinicDatabase();
+    await database.exec("PRAGMA foreign_keys = ON");
+    const queueRow = await database.prepare(
       "SELECT appointment_id FROM opd_queue WHERE id = ?",
     ).get(id) as { appointment_id: string } | undefined;
     if (!queueRow) {
@@ -362,9 +360,9 @@ export async function PATCH(request: Request) {
       ? text(body.consultEndTime) || now
       : null;
 
-    database.exec("BEGIN IMMEDIATE");
+    await database.exec("BEGIN IMMEDIATE");
     try {
-      database.prepare(`
+      await database.prepare(`
         UPDATE opd_queue
         SET status = ?, consult_start_time = COALESCE(?, consult_start_time),
             consult_end_time = COALESCE(?, consult_end_time)
@@ -372,16 +370,16 @@ export async function PATCH(request: Request) {
       `).run(status, consultStartTime, consultEndTime, id);
 
       const appointmentStatus = status === "skipped" ? "no-show" : status;
-      database.prepare("UPDATE appointments SET status = ? WHERE id = ?")
+      await database.prepare("UPDATE appointments SET status = ? WHERE id = ?")
         .run(appointmentStatus, queueRow.appointment_id);
 
-      database.exec("COMMIT");
+      await database.exec("COMMIT");
     } catch (error) {
-      database.exec("ROLLBACK");
+      await database.exec("ROLLBACK");
       throw error;
     }
 
-    const result = database.prepare(`
+    const result = await database.prepare(`
       SELECT queue.*, appointment.chief_complaint
       FROM opd_queue AS queue
       JOIN appointments AS appointment ON appointment.id = queue.appointment_id
