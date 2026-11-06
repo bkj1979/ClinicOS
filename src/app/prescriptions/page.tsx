@@ -59,6 +59,7 @@ export default function PrescriptionsPage() {
   const [isSharing, setIsSharing] = useState(false);
   const [isPreparingShare, setIsPreparingShare] = useState(false);
   const [shareQrDataUrl, setShareQrDataUrl] = useState("");
+  const [shareQrError, setShareQrError] = useState("");
   const [shareFallback, setShareFallback] = useState(false);
   const [shareError, setShareError] = useState("");
 
@@ -97,24 +98,46 @@ export default function PrescriptionsPage() {
     setShareConsentConfirmed(false);
     setShareFallback(false);
     setShareQrDataUrl("");
+    setShareQrError("");
     setShareError("");
     setIsPreparingShare(true);
     void getPrescriptionVerificationQr(prescriptionId).then(
-      ({ dataUrl }) => setShareQrDataUrl(dataUrl),
-      (error: unknown) => setShareError(error instanceof Error ? error.message : "Could not create a verification QR.")
+      ({ dataUrl }) => {
+        setShareQrDataUrl(dataUrl);
+        setShareQrError("");
+      },
+      (error: unknown) => {
+        setShareQrError(error instanceof Error ? error.message : "Could not create a verification QR.");
+      }
     ).finally(() => setIsPreparingShare(false));
   };
 
   const handleSharePrescription = () => {
-    if (!shareRx || !sharePatient?.phone || !shareConsentConfirmed || !shareQrDataUrl) return;
+    if (!shareRx || !sharePatient?.phone || !shareConsentConfirmed || isPreparingShare) return;
 
     setShareError("");
     try {
-      const file = createPrescriptionPdf(shareRx, sharePatient, { verificationQrDataUrl: shareQrDataUrl });
+      const file = createPrescriptionPdf(
+        shareRx,
+        sharePatient,
+        shareQrDataUrl ? { verificationQrDataUrl: shareQrDataUrl } : {},
+      );
       const shareData = {
         files: [file],
         title: `Prescription ${shareRx.prescriptionNo}`,
         text: "Please find the attached prescription from ClinicOS.",
+      };
+
+      const downloadPdf = () => {
+        const downloadUrl = URL.createObjectURL(file);
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 60_000);
+        setShareFallback(true);
       };
 
       if (
@@ -130,19 +153,13 @@ export default function PrescriptionsPage() {
           },
           (error: unknown) => {
             if (error instanceof Error && error.name === "AbortError") return;
-            setShareError(error instanceof Error ? error.message : "The prescription could not be shared.");
+            downloadPdf();
           }
         ).finally(() => setIsSharing(false));
         return;
       }
 
-      const downloadUrl = URL.createObjectURL(file);
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = file.name;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-      setShareFallback(true);
+      downloadPdf();
     } catch (error) {
       setShareError(error instanceof Error ? error.message : "The prescription PDF could not be prepared.");
     }
@@ -632,6 +649,11 @@ export default function PrescriptionsPage() {
                     )}
                   </div>
                 )}
+                {shareQrError && (
+                  <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    The verification QR could not be added, but you can still share the prescription PDF. To enable QR verification, configure the prescription signing key and public site URL in the Vercel project, then redeploy.
+                  </p>
+                )}
                 {shareError && <p role="alert" className="text-sm text-red-600">{shareError}</p>}
               </div>
               <div className="flex justify-end gap-2 border-t px-6 py-4">
@@ -645,10 +667,10 @@ export default function PrescriptionsPage() {
                 <button
                   type="button"
                   onClick={handleSharePrescription}
-                  disabled={!shareConsentConfirmed || isSharing || isPreparingShare || !shareQrDataUrl}
+                  disabled={!shareConsentConfirmed || isSharing || isPreparingShare}
                   className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isSharing ? "Opening share sheet..." : isPreparingShare ? "Preparing verified PDF..." : "Share e-Rx PDF"}
+                  {isSharing ? "Opening share sheet..." : isPreparingShare ? "Preparing PDF..." : "Share e-Rx PDF"}
                 </button>
               </div>
             </section>
