@@ -38,6 +38,7 @@
 ### 5. 📋 EMR with Specialty Charting
 - **Patient Registry**: Instant lookup by Name, Mobile Number, UHID, or ABHA ID.
 - **Comprehensive Demographic Profile**: Allergies (red banner alerts), chronic conditions, emergency contacts, and insurance details.
+- **Patient Demographic Updates**: Edit contact details, address, personal information, and emergency contact from the patient Profile tab while preserving the patient ID and clinical history.
 - **Doctor Consultation Workspace**:
   - Interactive vitals entry with color-coded normal/warning/critical thresholds (BP, HR, SpO2, Temp, Blood Sugar, BMI, Pain Scale).
   - Specialty-tailored clinical history and past encounter timeline.
@@ -46,7 +47,9 @@
 ### 6. 📝 Smart Prescriptions & e-Rx
 - **Rapid Digital Prescriptions**: Prescribe medications in under 30 seconds with dosage, frequency, route, duration, and food timing.
 - **Drug-Drug & Allergy Interaction Alerts**: Automated safety checks highlighting severity (Mild, Moderate, Severe) with clinical action guidance.
-- **Digital Rx & QR Code**: Print on custom clinic letterhead or share digitally via e-Rx.
+- **e-Rx PDF Sharing & Verification**: Generate a prescription PDF and share it from the device share sheet, then choose WhatsApp and verify the patient's mobile number. If file sharing is unavailable, download the PDF and attach it in the WhatsApp chat. Prescription PDFs include a signed QR code that verifies against the clinic record; the public verification page shows only the prescription number, date, prescriber, and patient initials.
+
+To enable prescription verification, configure a stable server-only `CLINICOS_PRESCRIPTION_SIGNING_KEY` (at least 32 random bytes) in `.env.local` and in the deployment environment. Generate a key with `node -p "require('node:crypto').randomBytes(32).toString('base64url')"`; keep the same key across deployments and never commit or expose it to client-side code. Set `NEXT_PUBLIC_CLINICOS_BASE_URL` to the clinic's HTTPS URL so QR codes work from patient or pharmacy phones. Without it, local development QR codes point to localhost and can only be scanned on the same computer. Verification fails if the prescription has been cancelled or its clinical contents have changed.
 
 ### 7. 🏛️ ABDM & NABH Compliance Ready
 - **ABDM Integration Dashboard**:

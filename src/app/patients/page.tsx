@@ -96,6 +96,7 @@ export default function PatientsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [showEditPatientModal, setShowEditPatientModal] = useState(false);
   const [detailTab, setDetailTab] = useState<"demographics" | "visits" | "allergies" | "vitals" | "prescriptions" | "labs">("demographics");
   const [loadError, setLoadError] = useState("");
 
@@ -372,7 +373,10 @@ export default function PatientsPage() {
               {/* Detail Content */}
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 {detailTab === "demographics" && (
-                  <DemographicsTab patient={selectedPatient} />
+                  <DemographicsTab
+                    patient={selectedPatient}
+                    onEdit={() => setShowEditPatientModal(true)}
+                  />
                 )}
                 {detailTab === "visits" && (
                   <VisitsTab patientId={selectedPatient.id} />
@@ -406,6 +410,19 @@ export default function PatientsPage() {
           }}
         />
       )}
+      {showEditPatientModal && selectedPatient && (
+        <EditPatientModal
+          patient={selectedPatient}
+          onClose={() => setShowEditPatientModal(false)}
+          onUpdated={(updatedPatient) => {
+            setPatientRecords((current) =>
+              current.map((patient) => patient.id === updatedPatient.id ? updatedPatient : patient)
+            );
+            setSelectedPatient(updatedPatient);
+            setShowEditPatientModal(false);
+          }}
+        />
+      )}
       </div>
     </AppLayout>
   );
@@ -415,7 +432,7 @@ export default function PatientsPage() {
 // Detail Tab Components
 // ===================================================================
 
-function DemographicsTab({ patient }: { patient: Patient }) {
+function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
   const fields = [
     { label: "Full Name", value: patient.name },
     { label: "UHID", value: patient.uhid },
@@ -424,7 +441,12 @@ function DemographicsTab({ patient }: { patient: Patient }) {
     { label: "Blood Group", value: patient.bloodGroup || "Not recorded" },
     { label: "Phone", value: patient.phone },
     { label: "Email", value: patient.email || "Not provided" },
-    { label: "Address", value: patient.address ? `${patient.address.line1}, ${patient.address.city} - ${patient.address.pincode}` : "Not provided" },
+    {
+      label: "Address",
+      value: patient.address
+        ? [patient.address.line1, patient.address.line2, patient.address.city, patient.address.state, patient.address.pincode].filter(Boolean).join(", ")
+        : "Not provided",
+    },
     { label: "ABHA ID", value: patient.abhaId || "Not linked" },
     { label: "Registered On", value: formatDate(patient.registeredAt) },
     { label: "Total Visits", value: String(patient.totalVisits) },
@@ -433,7 +455,16 @@ function DemographicsTab({ patient }: { patient: Patient }) {
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-semibold text-slate-900">Patient Demographics</h4>
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-slate-900">Patient Demographics</h4>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+        >
+          <Edit className="h-3.5 w-3.5" /> Edit details
+        </button>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         {fields.map((f) => (
           <div key={f.label} className="space-y-0.5">
@@ -454,6 +485,166 @@ function DemographicsTab({ patient }: { patient: Patient }) {
           <p className="text-sm text-blue-800">{patient.insuranceInfo.provider} · Policy: {patient.insuranceInfo.policyNo} · Valid till: {patient.insuranceInfo.validTill}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function EditPatientModal({
+  patient,
+  onClose,
+  onUpdated,
+}: {
+  patient: Patient;
+  onClose: () => void;
+  onUpdated: (patient: Patient) => void;
+}) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    name: patient.name,
+    phone: patient.phone,
+    email: patient.email ?? "",
+    gender: patient.gender,
+    dob: patient.dob,
+    bloodGroup: patient.bloodGroup ?? "",
+    addressLine1: patient.address?.line1 ?? "",
+    addressLine2: patient.address?.line2 ?? "",
+    city: patient.address?.city ?? "",
+    state: patient.address?.state ?? "",
+    pincode: patient.address?.pincode ?? "",
+    emergencyName: patient.emergencyContact?.name ?? "",
+    emergencyPhone: patient.emergencyContact?.phone ?? "",
+    emergencyRelation: patient.emergencyContact?.relation ?? "",
+  });
+
+  const update = (key: keyof typeof form, value: string) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setIsSaving(true);
+
+    try {
+      const response = await fetch("/api/patients", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, id: patient.id }),
+      });
+      const result = await response.json() as Patient | { error?: string };
+
+      if (!response.ok || !("id" in result)) {
+        throw new Error("error" in result ? result.error : "Unable to update patient.");
+      }
+
+      onUpdated(result);
+    } catch (submissionError) {
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : "Unable to update patient. Please try again.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <form onSubmit={handleSubmit} className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Edit Patient Details</h2>
+            <p className="text-xs text-slate-500">{patient.name} · {patient.uhid}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close edit patient dialog" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-6">
+          {error && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Personal Information</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <InputField label="Full Name *" value={form.name} onChange={(value) => update("name", value)} required />
+              <InputField label="Phone Number *" value={form.phone} onChange={(value) => update("phone", value)} placeholder="10-digit mobile" type="tel" required />
+              <InputField label="Email" value={form.email} onChange={(value) => update("email", value)} type="email" />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Gender *</label>
+                <select
+                  value={form.gender}
+                  onChange={(event) => update("gender", event.target.value)}
+                  required
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <InputField label="Date of Birth *" value={form.dob} onChange={(value) => update("dob", value)} type="date" required />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Blood Group</label>
+                <select
+                  value={form.bloodGroup}
+                  onChange={(event) => update("bloodGroup", event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Not recorded</option>
+                  {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((bloodGroup) => (
+                    <option key={bloodGroup} value={bloodGroup}>{bloodGroup}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <MapPin className="h-4 w-4 text-emerald-600" /> Address
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <InputField label="Address Line 1" value={form.addressLine1} onChange={(value) => update("addressLine1", value)} />
+              </div>
+              <div className="col-span-2">
+                <InputField label="Address Line 2" value={form.addressLine2} onChange={(value) => update("addressLine2", value)} />
+              </div>
+              <InputField label="City" value={form.city} onChange={(value) => update("city", value)} />
+              <InputField label="State" value={form.state} onChange={(value) => update("state", value)} />
+              <InputField label="Pincode" value={form.pincode} onChange={(value) => update("pincode", value)} placeholder="6-digit pincode" />
+            </div>
+            <p className="mt-2 text-xs text-slate-500">Leave Address Line 1 empty to clear the saved address.</p>
+          </div>
+
+          <div>
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <Phone className="h-4 w-4 text-emerald-600" /> Emergency Contact
+            </h3>
+            <div className="grid grid-cols-3 gap-3">
+              <InputField label="Name" value={form.emergencyName} onChange={(value) => update("emergencyName", value)} />
+              <InputField label="Phone" value={form.emergencyPhone} onChange={(value) => update("emergencyPhone", value)} type="tel" />
+              <InputField label="Relation" value={form.emergencyRelation} onChange={(value) => update("emergencyRelation", value)} />
+            </div>
+            <p className="mt-2 text-xs text-slate-500">Complete all three fields to save an emergency contact, or clear all three to remove it.</p>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">
+          <button type="button" onClick={onClose} disabled={isSaving} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            Cancel
+          </button>
+          <button type="submit" disabled={isSaving} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+            {isSaving ? "Saving..." : "Save Changes"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -47,6 +47,24 @@ interface RegisterPatientBody {
   insuranceValidTill?: unknown;
 }
 
+interface UpdatePatientBody {
+  id?: unknown;
+  name?: unknown;
+  phone?: unknown;
+  email?: unknown;
+  gender?: unknown;
+  dob?: unknown;
+  bloodGroup?: unknown;
+  addressLine1?: unknown;
+  addressLine2?: unknown;
+  city?: unknown;
+  state?: unknown;
+  pincode?: unknown;
+  emergencyName?: unknown;
+  emergencyPhone?: unknown;
+  emergencyRelation?: unknown;
+}
+
 function parseJson<T>(value: string | null): T | undefined {
   return value === null ? undefined : JSON.parse(value) as T;
 }
@@ -267,6 +285,119 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to register patient in the database:", error);
     return Response.json({ error: "Unable to register patient. Please check the local database and try again." }, { status: 500 });
+  } finally {
+    database?.close();
+  }
+}
+
+export async function PUT(request: Request) {
+  if (!await getAuthenticatedUser(request)) return unauthorizedResponse();
+  let parsedBody: unknown;
+
+  try {
+    parsedBody = await request.json();
+  } catch {
+    return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
+  }
+
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    return Response.json({ error: "Request body must be a patient object." }, { status: 400 });
+  }
+
+  const body = parsedBody as UpdatePatientBody;
+  const id = text(body.id);
+  const name = text(body.name);
+  const phone = text(body.phone);
+  const email = text(body.email);
+  const gender = text(body.gender);
+  const dob = text(body.dob);
+  const bloodGroup = text(body.bloodGroup);
+  const addressLine1 = text(body.addressLine1);
+  const addressLine2 = text(body.addressLine2);
+  const city = text(body.city);
+  const state = text(body.state);
+  const pincode = text(body.pincode);
+  const emergencyName = text(body.emergencyName);
+  const emergencyPhone = text(body.emergencyPhone);
+  const emergencyRelation = text(body.emergencyRelation);
+
+  if (!id) {
+    return Response.json({ error: "A patient ID is required." }, { status: 400 });
+  }
+  if (!name || name.length > 120) {
+    return Response.json({ error: "Enter a patient name (up to 120 characters)." }, { status: 400 });
+  }
+  if (!/^\d{10}$/.test(phone)) {
+    return Response.json({ error: "Enter a valid 10-digit phone number." }, { status: 400 });
+  }
+  if (email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)) {
+    return Response.json({ error: "Enter a valid email address." }, { status: 400 });
+  }
+  if (!["Male", "Female", "Other"].includes(gender)) {
+    return Response.json({ error: "Select a valid gender." }, { status: 400 });
+  }
+  if (!validDate(dob) || dob > new Date().toISOString().slice(0, 10)) {
+    return Response.json({ error: "Enter a valid date of birth that is not in the future." }, { status: 400 });
+  }
+  if (bloodGroup && !["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].includes(bloodGroup)) {
+    return Response.json({ error: "Select a valid blood group." }, { status: 400 });
+  }
+  if (addressLine1.length > 200 || addressLine2.length > 200 || city.length > 100 || state.length > 100) {
+    return Response.json({ error: "Address fields exceed their maximum allowed length." }, { status: 400 });
+  }
+  if (addressLine1 && (!city || !state)) {
+    return Response.json({ error: "Enter the city and state for the patient's address." }, { status: 400 });
+  }
+  if (pincode && !/^\d{6}$/.test(pincode)) {
+    return Response.json({ error: "Enter a valid 6-digit pincode." }, { status: 400 });
+  }
+  if (
+    [emergencyName, emergencyPhone, emergencyRelation].some(Boolean) &&
+    (!emergencyName || emergencyName.length > 120 || !/^\d{10}$/.test(emergencyPhone) || !emergencyRelation || emergencyRelation.length > 80)
+  ) {
+    return Response.json({ error: "Complete all emergency contact fields using a valid 10-digit phone number." }, { status: 400 });
+  }
+
+  const address = addressLine1
+    ? { line1: addressLine1, line2: addressLine2 || undefined, city, state, pincode }
+    : undefined;
+  const emergencyContact = emergencyName
+    ? { name: emergencyName, phone: emergencyPhone, relation: emergencyRelation }
+    : undefined;
+
+  let database: ClinicDatabase | undefined;
+  try {
+    database = await openClinicDatabase();
+    const result = await database.prepare(`
+      UPDATE patients
+      SET name = ?, phone = ?, email = ?, gender = ?, dob = ?, age = ?, blood_group = ?,
+          address_json = ?, emergency_contact_json = ?
+      WHERE id = ?
+    `).run(
+      name,
+      phone,
+      email || null,
+      gender,
+      dob,
+      calculateAge(dob),
+      bloodGroup || null,
+      address ? JSON.stringify(address) : null,
+      emergencyContact ? JSON.stringify(emergencyContact) : null,
+      id,
+    );
+
+    if (result.changes === 0) {
+      return Response.json({ error: "Patient record not found." }, { status: 404 });
+    }
+
+    const row = await database.prepare("SELECT * FROM patients WHERE id = ?").get(id) as PatientRow | undefined;
+    if (!row) {
+      throw new Error("Updated patient record could not be loaded.");
+    }
+    return Response.json(toPatient(row));
+  } catch (error) {
+    console.error("Failed to update patient in the database:", error);
+    return Response.json({ error: "Unable to update patient. Please check the local database and try again." }, { status: 500 });
   } finally {
     database?.close();
   }
