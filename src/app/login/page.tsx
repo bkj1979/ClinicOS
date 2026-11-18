@@ -61,7 +61,12 @@ export default function LoginPage() {
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Unable to sign in.");
-      router.replace("/dashboard");
+      const next = new URLSearchParams(window.location.search).get("next");
+      const nextUrl = next ? new URL(next, window.location.origin) : null;
+      const destination = nextUrl?.origin === window.location.origin
+        ? `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+        : "/dashboard";
+      router.replace(destination);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to sign in.");

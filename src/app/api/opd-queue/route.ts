@@ -80,13 +80,77 @@ export async function GET(request: Request) {
   try {
     database = await openClinicDatabase();
     const today = new Date().toISOString().slice(0, 10);
+
+    // Auto-sync unqueued appointments for today into opd_queue
+    const unqueued = await database.prepare(`
+      SELECT a.*
+      FROM appointments a
+      LEFT JOIN opd_queue q ON q.appointment_id = a.id
+      WHERE a.date = ? AND a.status <> 'cancelled' AND q.id IS NULL
+      ORDER BY a.time_slot ASC, a.created_at ASC
+    `).all(today) as unknown as Record<string, unknown>[];
+
+    if (unqueued.length > 0) {
+      await database.exec("BEGIN IMMEDIATE");
+      try {
+        for (const appt of unqueued) {
+          const queueId = randomUUID();
+          const tokenNumber = String(appt.token_number || "T001");
+          const waitingAhead = await database.prepare(`
+            SELECT COUNT(*) AS count
+            FROM opd_queue
+            WHERE doctor_id = ? AND status = 'waiting'
+              AND substr(check_in_time, 1, 10) = ?
+          `).get(String(appt.doctor_id), today) as { count: number };
+          const estimatedWaitMinutes = waitingAhead.count * 15;
+          const status = appt.status === "in-consultation"
+            ? "in-consultation"
+            : appt.status === "completed"
+            ? "completed"
+            : "waiting";
+          const checkInTime = String(appt.created_at || new Date().toISOString());
+
+          await database.prepare(`
+            INSERT INTO opd_queue (
+              id, token_number, patient_id, patient_name, patient_age, patient_gender,
+              appointment_id, doctor_id, doctor_name, department, type, status, priority,
+              check_in_time, estimated_wait_minutes, vitals_recorded
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, 0)
+          `).run(
+            queueId,
+            tokenNumber,
+            String(appt.patient_id),
+            String(appt.patient_name),
+            Number(appt.patient_age),
+            String(appt.patient_gender),
+            String(appt.id),
+            String(appt.doctor_id),
+            String(appt.doctor_name),
+            String(appt.department),
+            String(appt.type),
+            status,
+            checkInTime,
+            estimatedWaitMinutes,
+          );
+
+          if (appt.status === "scheduled") {
+            await database.prepare("UPDATE appointments SET status = 'waiting' WHERE id = ?").run(String(appt.id));
+          }
+        }
+        await database.exec("COMMIT");
+      } catch (syncError) {
+        await database.exec("ROLLBACK");
+        console.error("Error auto-syncing appointments into OPD queue:", syncError);
+      }
+    }
+
     const rows = await database.prepare(`
       SELECT queue.*, appointment.chief_complaint
       FROM opd_queue AS queue
       JOIN appointments AS appointment ON appointment.id = queue.appointment_id
-      WHERE substr(queue.check_in_time, 1, 10) = ?
+      WHERE appointment.date = ? OR substr(queue.check_in_time, 1, 10) = ?
       ORDER BY queue.check_in_time ASC
-    `).all(today) as unknown as Record<string, unknown>[];
+    `).all(today, today) as unknown as Record<string, unknown>[];
     return Response.json(rows.map(toQueuePatient));
   } catch (error) {
     console.error("Failed to load today's OPD queue from SQLite:", error);

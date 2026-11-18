@@ -202,6 +202,35 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   qr_code TEXT
 );
 
+CREATE TABLE IF NOT EXISTS patient_portal_accounts (
+  id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL UNIQUE REFERENCES patients(id) ON DELETE CASCADE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS patient_portal_invites (
+  token_hash TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  issued_by TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS patient_portal_invites_expiry_idx
+  ON patient_portal_invites(expires_at);
+
+CREATE TABLE IF NOT EXISTS patient_portal_sessions (
+  token_hash TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS patient_portal_sessions_expiry_idx
+  ON patient_portal_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS revenue_by_month (
   month TEXT PRIMARY KEY,
   revenue REAL NOT NULL,

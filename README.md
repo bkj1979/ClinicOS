@@ -51,7 +51,19 @@
 
 To enable prescription verification, configure a stable server-only `CLINICOS_PRESCRIPTION_SIGNING_KEY` (at least 32 random bytes) in `.env.local` and in the deployment environment. Generate a key with `node -p "require('node:crypto').randomBytes(32).toString('base64url')"`; keep the same key across deployments and never commit or expose it to client-side code. Set `NEXT_PUBLIC_CLINICOS_BASE_URL` to the clinic's HTTPS origin (for example, `https://clinic.example.com`, with no path) so QR codes work from patient or pharmacy phones. On Vercel, add both variables to the project's Environment Variables and redeploy. Without the public URL, local development QR codes point to localhost and can only be scanned on the same computer. Verification fails if the prescription has been cancelled or its clinical contents have changed. Sending the prescription PDF remains available if QR verification is not configured; the share dialog warns when the QR could not be added.
 
-### 7. 🏛️ ABDM & NABH Compliance Ready
+### 7. Patient App (PWA)
+- Patients can install the web app from `/patient`, sign in with their UHID and a password, view their own appointments and prescriptions, and request appointment slots for staff confirmation.
+- Staff can create a seven-day, single-use patient invitation from the patient's Profile tab and manually share the link. Patients set their own password when activating it; portal accounts and sessions are separate from staff authentication.
+- The patient app intentionally excludes encounter notes and lab results. Appointment requests appear in the staff Appointments module with a **Requested** status and can be confirmed there.
+- Patient installation and access require the deployed clinic's public HTTPS URL. Localhost is for development only; set `NEXT_PUBLIC_CLINICOS_BASE_URL` to the deployed URL when generating links for other devices.
+
+### Doctor Mobile App (PWA)
+- Doctor users can open `/doctor` or choose **Doctor Mobile** from the staff navigation, then install the separate ClinicOS Doctor PWA from their mobile browser.
+- The mobile workspace includes the signed-in doctor's appointments, booking-request confirmation, assigned-patient search and charts, consultation notes, and prescription creation. **Full ClinicOS** returns to the complete desktop-oriented system.
+- Doctor APIs enforce the signed-in doctor role and scope charts, schedules, and consultation writes to patients assigned to that doctor. Clinical API responses are not cached for offline use.
+- Doctor PWA installation requires the clinic's HTTPS deployment. On iOS, open `/doctor` in Safari and use **Share → Add to Home Screen**; supported browsers may show an **Install app** button.
+
+### 8. 🏛️ ABDM & NABH Compliance Ready
 - **ABDM Integration Dashboard**:
   - ABHA ID creation, verification, and linking statistics.
   - Health Information Provider (HIP) & Health Information User (HIU) status indicators.
@@ -60,7 +72,7 @@ To enable prescription verification, configure a stable server-only `CLINICOS_PR
   - 10 chapters evaluated (AAC, COP, MOM, PRE, HIC, CQI, ROM, FMS, HRM, IMS).
   - Expandable quality criteria with progress scoring (78% current compliance benchmark).
 
-### 8. 📊 Analytics & Multi-Centre Business Intelligence
+### 9. 📊 Analytics & Multi-Centre Business Intelligence
 - **Executive KPI Cards**: Revenue, footfall, average revenue per patient, new vs repeat patient split, retention rate, and wait times.
 - **Interactive Visualizations (Recharts)**:
   - 6-month Revenue trend (Area chart).

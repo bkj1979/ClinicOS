@@ -24,6 +24,7 @@ import {
   Building2,
   LogOut,
   User,
+  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AuthUser } from "@/lib/auth-types";
@@ -162,7 +163,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
-          {[...navigation, ...(user.role === "admin" ? [{ name: "Settings", href: "/settings", icon: Settings }] : [])].map((item) => {
+          {[...navigation, ...(user.role === "doctor" ? [{ name: "Doctor Mobile", href: "/doctor", icon: Smartphone }] : []), ...(user.role === "admin" ? [{ name: "Settings", href: "/settings", icon: Settings }] : [])].map((item) => {
             const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
               <Link

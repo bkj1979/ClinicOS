@@ -1,23 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { APPOINTMENT_TIME_SLOT_SET } from "@/lib/appointment-scheduling";
 import type { Appointment, AppointmentStatus, AppointmentType } from "@/lib/types";
 import { getAuthenticatedUser, unauthorizedResponse } from "@/lib/auth";
 import { openClinicDatabase, type ClinicDatabase } from "@/lib/database";
 
 export const runtime = "nodejs";
 
-const timeSlots = new Set([
-  "09:00 AM", "09:15 AM", "09:30 AM", "09:45 AM",
-  "10:00 AM", "10:15 AM", "10:30 AM", "10:45 AM",
-  "11:00 AM", "11:15 AM", "11:30 AM", "11:45 AM",
-  "12:00 PM", "12:15 PM", "12:30 PM", "12:45 PM",
-  "02:00 PM", "02:15 PM", "02:30 PM", "02:45 PM",
-  "03:00 PM", "03:15 PM", "03:30 PM", "03:45 PM",
-  "04:00 PM", "04:15 PM", "04:30 PM", "04:45 PM",
-  "05:00 PM", "05:15 PM", "05:30 PM", "05:45 PM",
-]);
 const appointmentTypes: AppointmentType[] = ["walk-in", "scheduled", "follow-up", "teleconsult"];
 const appointmentStatuses: AppointmentStatus[] = [
-  "scheduled", "waiting", "in-consultation", "completed", "cancelled", "no-show",
+  "requested", "scheduled", "waiting", "in-consultation", "completed", "cancelled", "no-show",
 ];
 
 interface AppointmentRow {
@@ -127,7 +118,7 @@ export async function POST(request: Request) {
   if (!validDate(date) || date < new Date().toISOString().slice(0, 10)) {
     return Response.json({ error: "Choose a valid appointment date that is today or later." }, { status: 400 });
   }
-  if (!timeSlots.has(timeSlot)) {
+  if (!APPOINTMENT_TIME_SLOT_SET.has(timeSlot)) {
     return Response.json({ error: "Choose a valid appointment time slot." }, { status: 400 });
   }
   if (!appointmentTypes.includes(type as AppointmentType)) {
@@ -217,6 +208,41 @@ export async function POST(request: Request) {
         appointment.createdAt,
       );
 
+      if (appointment.date === new Date().toISOString().slice(0, 10)) {
+        const queueId = randomUUID();
+        const waitingAhead = await database.prepare(`
+          SELECT COUNT(*) AS count
+          FROM opd_queue
+          WHERE doctor_id = ? AND status = 'waiting'
+            AND substr(check_in_time, 1, 10) = ?
+        `).get(doctor.id, appointment.date) as { count: number };
+        const estimatedWaitMinutes = waitingAhead.count * 15;
+
+        await database.prepare(`
+          INSERT INTO opd_queue (
+            id, token_number, patient_id, patient_name, patient_age, patient_gender,
+            appointment_id, doctor_id, doctor_name, department, type, status, priority,
+            check_in_time, estimated_wait_minutes, vitals_recorded
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', 'normal', ?, ?, 0)
+        `).run(
+          queueId,
+          appointment.tokenNumber ?? "T001",
+          appointment.patientId,
+          appointment.patientName,
+          appointment.patientAge,
+          appointment.patientGender,
+          appointment.id,
+          appointment.doctorId,
+          appointment.doctorName,
+          appointment.department,
+          appointment.type,
+          appointment.createdAt,
+          estimatedWaitMinutes,
+        );
+        appointment.status = "waiting";
+        await database.prepare("UPDATE appointments SET status = 'waiting' WHERE id = ?").run(appointment.id);
+      }
+
       await database.exec("COMMIT");
       return Response.json(appointment, { status: 201 });
     } catch (error) {
@@ -256,6 +282,48 @@ export async function PATCH(request: Request) {
   try {
     database = await openClinicDatabase();
     await database.prepare("UPDATE appointments SET status = ? WHERE id = ?").run(status, id);
+
+    if (status === "waiting") {
+      const existingQueue = await database.prepare("SELECT id FROM opd_queue WHERE appointment_id = ?").get(id);
+      if (!existingQueue) {
+        const rowAppt = await database.prepare("SELECT * FROM appointments WHERE id = ?").get(id) as AppointmentRow | undefined;
+        if (rowAppt) {
+          const queueId = randomUUID();
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          const waitingAhead = await database.prepare(`
+            SELECT COUNT(*) AS count
+            FROM opd_queue
+            WHERE doctor_id = ? AND status = 'waiting'
+              AND substr(check_in_time, 1, 10) = ?
+          `).get(rowAppt.doctor_id, today) as { count: number };
+          const estimatedWaitMinutes = waitingAhead.count * 15;
+
+          await database.prepare(`
+            INSERT INTO opd_queue (
+              id, token_number, patient_id, patient_name, patient_age, patient_gender,
+              appointment_id, doctor_id, doctor_name, department, type, status, priority,
+              check_in_time, estimated_wait_minutes, vitals_recorded
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', 'normal', ?, ?, 0)
+          `).run(
+            queueId,
+            rowAppt.token_number || "T001",
+            rowAppt.patient_id,
+            rowAppt.patient_name,
+            rowAppt.patient_age,
+            rowAppt.patient_gender,
+            rowAppt.id,
+            rowAppt.doctor_id,
+            rowAppt.doctor_name,
+            rowAppt.department,
+            rowAppt.type,
+            now.toISOString(),
+            estimatedWaitMinutes,
+          );
+        }
+      }
+    }
+
     const row = await database.prepare("SELECT * FROM appointments WHERE id = ?").get(id) as AppointmentRow | undefined;
     if (!row) {
       return Response.json({ error: "Appointment not found." }, { status: 404 });

@@ -55,7 +55,7 @@ export interface Patient {
 }
 
 // ---- Appointments ----
-export type AppointmentStatus = "scheduled" | "waiting" | "in-consultation" | "completed" | "cancelled" | "no-show";
+export type AppointmentStatus = "requested" | "scheduled" | "waiting" | "in-consultation" | "completed" | "cancelled" | "no-show";
 export type AppointmentType = "walk-in" | "scheduled" | "follow-up" | "teleconsult";
 
 export interface Appointment {
@@ -378,4 +378,3 @@ export interface AuditLog {
   ipAddress: string;
   timestamp: string;
 }
-

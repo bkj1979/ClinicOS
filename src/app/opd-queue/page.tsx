@@ -56,7 +56,7 @@ const initialQueue: QueuePatient[] = [
   { id: "q7", tokenNumber: "T010", patientId: "p10", patientName: "Lakshmi Venkatesh", patientAge: 68, patientGender: "Female", doctorId: "u2", doctorName: "Dr. Rajesh Patel", department: "Cardiology", type: "scheduled", status: "waiting", priority: "urgent", checkInTime: "2026-11-01T10:45:00", estimatedWaitMinutes: 18, vitalsRecorded: true, chiefComplaint: "Atrial fibrillation - routine check" },
 ];
 
-const doctors = [
+const defaultDoctors = [
   { id: "all", name: "All Doctors" },
   { id: "u1", name: "Dr. Priya Sharma", department: "General Medicine" },
   { id: "u2", name: "Dr. Rajesh Patel", department: "Cardiology" },
@@ -67,6 +67,7 @@ const doctors = [
 
 export default function OPDQueuePage() {
   const [queue, setQueue] = useState<QueuePatient[]>(initialQueue);
+  const [doctors, setDoctors] = useState<{ id: string; name: string; department?: string }[]>(defaultDoctors);
   const [selectedDoctor, setSelectedDoctor] = useState("all");
   const [currentTime, setCurrentTime] = useState<Date>(() => new Date("2026-11-02T10:30:00"));
   const [timeStr, setTimeStr] = useState("10:30:00 AM");
@@ -85,6 +86,29 @@ export default function OPDQueuePage() {
   const [queueError, setQueueError] = useState("");
   const [queueNotice, setQueueNotice] = useState("");
   const persistentQueueIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/doctors")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json() as Array<{ id: string; name: string; specialization?: string }>;
+        if (active && Array.isArray(data) && data.length > 0) {
+          setDoctors([
+            { id: "all", name: "All Doctors" },
+            ...data.map((d) => ({
+              id: d.id,
+              name: d.name,
+              department: d.specialization || "General Medicine",
+            })),
+          ]);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const update = () => {
@@ -111,10 +135,9 @@ export default function OPDQueuePage() {
       .then((persistedQueue) => {
         if (!active) return;
         for (const patient of persistedQueue) persistentQueueIds.current.add(patient.id);
-        setQueue((current) => {
-          const existingIds = new Set(current.map((patient) => patient.id));
-          return [...current, ...persistedQueue.filter((patient) => !existingIds.has(patient.id))];
-        });
+        if (persistedQueue.length > 0) {
+          setQueue(persistedQueue);
+        }
       })
       .catch((error: unknown) => {
         if (active) setQueueError(error instanceof Error ? error.message : "Unable to load the OPD queue.");

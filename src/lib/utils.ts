@@ -56,6 +56,7 @@ export function getInitials(name: string): string {
 
 export function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
+    requested: "bg-violet-100 text-violet-700",
     scheduled: "bg-blue-100 text-blue-700",
     waiting: "bg-amber-100 text-amber-700",
     "in-progress": "bg-emerald-100 text-emerald-700",
@@ -99,4 +100,3 @@ export function generateInvoiceNumber(): string {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `${prefix}-${yr}${mn}-${num}`;
 }
-

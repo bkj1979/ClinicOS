@@ -28,24 +28,15 @@ import type { Patient, User } from "@/lib/types";
 import type { Appointment, AppointmentStatus, AppointmentType } from "@/lib/types";
 import { cn, getStatusColor, getInitials } from "@/lib/utils";
 import AppLayout from "@/components/layout/app-layout";
+import { APPOINTMENT_TIME_SLOTS } from "@/lib/appointment-scheduling";
 
 const todayDateString = new Date().toISOString().split("T")[0];
 
 // ---- Time slots for new appointment modal ----
-const TIME_SLOTS = [
-  "09:00 AM", "09:15 AM", "09:30 AM", "09:45 AM",
-  "10:00 AM", "10:15 AM", "10:30 AM", "10:45 AM",
-  "11:00 AM", "11:15 AM", "11:30 AM", "11:45 AM",
-  "12:00 PM", "12:15 PM", "12:30 PM", "12:45 PM",
-  "02:00 PM", "02:15 PM", "02:30 PM", "02:45 PM",
-  "03:00 PM", "03:15 PM", "03:30 PM", "03:45 PM",
-  "04:00 PM", "04:15 PM", "04:30 PM", "04:45 PM",
-  "05:00 PM", "05:15 PM", "05:30 PM", "05:45 PM",
-];
-
 const DEPARTMENTS = ["All Departments", "General Medicine", "Cardiology", "Dermatology", "Orthopedics", "Pediatrics"];
 const STATUSES: { label: string; value: string }[] = [
   { label: "All Status", value: "all" },
+  { label: "Requested (all dates)", value: "requested" },
   { label: "Scheduled", value: "scheduled" },
   { label: "Waiting", value: "waiting" },
   { label: "In Consultation", value: "in-consultation" },
@@ -79,6 +70,7 @@ function typeBadge(type: AppointmentType) {
 
 function statusBadge(status: AppointmentStatus) {
   const labelMap: Record<AppointmentStatus, string> = {
+    requested: "Requested",
     scheduled: "Scheduled",
     waiting: "Waiting",
     "in-consultation": "In Consultation",
@@ -333,7 +325,7 @@ function NewAppointmentModal({
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">Time Slot *</label>
             <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-              {TIME_SLOTS.map((slot) => {
+              {APPOINTMENT_TIME_SLOTS.map((slot) => {
                 const booked = bookedSlots.includes(slot);
                 const selected = selectedSlot === slot;
                 return (
@@ -449,7 +441,7 @@ export default function AppointmentsPage() {
       completed: selectedDateAppointments.filter((a) => a.status === "completed").length,
       inProgress: selectedDateAppointments.filter((a) => a.status === "in-consultation").length,
       waiting: selectedDateAppointments.filter((a) => a.status === "waiting").length,
-      upcoming: selectedDateAppointments.filter((a) => a.status === "scheduled").length,
+      upcoming: selectedDateAppointments.filter((a) => a.status === "scheduled" || a.status === "requested").length,
       noShow: selectedDateAppointments.filter((a) => a.status === "no-show").length,
     };
   }, [data, filterDate]);
@@ -458,7 +450,7 @@ export default function AppointmentsPage() {
   const filtered = useMemo(() => {
     return data.filter((a) => {
       const q = searchQuery.toLowerCase();
-      const matchDate = a.date === filterDate;
+      const matchDate = filterStatus === "requested" || a.date === filterDate;
       const matchSearch =
         !q ||
         a.patientName.toLowerCase().includes(q) ||
@@ -504,6 +496,7 @@ export default function AppointmentsPage() {
 
   const statCards = [
     { label: "Total", value: stats.total, icon: CalendarDays, color: "text-blue-600", bg: "bg-blue-50" },
+    { label: "Requests", value: data.filter((a) => a.status === "requested").length, icon: Hourglass, color: "text-violet-600", bg: "bg-violet-50" },
     { label: "Completed", value: stats.completed, icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50" },
     { label: "In Progress", value: stats.inProgress, icon: CircleDot, color: "text-teal-600", bg: "bg-teal-50" },
     { label: "Waiting", value: stats.waiting, icon: Hourglass, color: "text-amber-600", bg: "bg-amber-50" },
@@ -540,7 +533,7 @@ export default function AppointmentsPage() {
           </div>
 
           {/* ── Stats Cards ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
             {statCards.map((s) => (
               <div key={s.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow">
                 <div className="flex items-center gap-3">
@@ -719,6 +712,12 @@ export default function AppointmentsPage() {
                           <button onClick={() => handleView(a)} title="View" className="p-1.5 hover:bg-slate-100 rounded-md transition-colors">
                             <Eye className="w-4 h-4 text-slate-500" />
                           </button>
+                          {a.status === "requested" && (
+                            <button onClick={() => handleStatusChange(a.id, "scheduled")} title="Confirm booking request" className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
+                              <CheckCircle2 className="w-4 h-4" />
+                              Confirm
+                            </button>
+                          )}
                           {(a.status === "scheduled") && (
                             <button onClick={() => handleCheckIn(a.id)} title="Check In" className="p-1.5 hover:bg-emerald-50 rounded-md transition-colors">
                               <LogIn className="w-4 h-4 text-emerald-600" />

@@ -5,7 +5,7 @@ import {
   Search, UserPlus, Users, CalendarDays, UserCheck, Shield,
   Phone, Mail, MapPin, Heart, AlertTriangle, ChevronRight,
   X, Check, Activity, Pill, FlaskConical, Clock, Eye,
-  Droplets, FileText, Edit, MoreHorizontal, Filter
+  Droplets, FileText, Edit, MoreHorizontal, Filter, Smartphone, Copy
 } from "lucide-react";
 import { patients, encounters, appointments } from "@/lib/mock-data";
 import { Patient } from "@/lib/types";
@@ -374,6 +374,7 @@ export default function PatientsPage() {
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 {detailTab === "demographics" && (
                   <DemographicsTab
+                    key={selectedPatient.id}
                     patient={selectedPatient}
                     onEdit={() => setShowEditPatientModal(true)}
                   />
@@ -433,6 +434,44 @@ export default function PatientsPage() {
 // ===================================================================
 
 function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
+  const [inviteUrl, setInviteUrl] = useState("");
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  const createInvite = async () => {
+    setInviteBusy(true);
+    setInviteError("");
+    setInviteMessage("");
+    setInviteUrl("");
+    try {
+      const response = await fetch("/api/patient-portal/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patientId: patient.id }),
+      });
+      const result = await response.json() as { inviteUrl?: string; error?: string };
+      if (!response.ok || !result.inviteUrl) {
+        throw new Error(result.error || "Unable to create the patient app invitation.");
+      }
+      setInviteUrl(result.inviteUrl);
+      setInviteMessage("Invitation created. It expires in 7 days and can only be used once.");
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "Unable to create the patient app invitation.");
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const copyInvite = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setInviteMessage("Invitation link copied. Share it with the patient using your usual channel.");
+    } catch {
+      setInviteError("Unable to copy the link. Select and copy the invitation link manually.");
+    }
+  };
+
   const fields = [
     { label: "Full Name", value: patient.name },
     { label: "UHID", value: patient.uhid },
@@ -479,6 +518,29 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
           <p className="text-sm text-red-800">{patient.emergencyContact.name} ({patient.emergencyContact.relation}) · {patient.emergencyContact.phone}</p>
         </div>
       )}
+      <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h5 className="flex items-center gap-1.5 text-xs font-semibold text-emerald-900">
+              <Smartphone className="h-4 w-4" /> Patient app invitation
+            </h5>
+            <p className="mt-1 text-xs text-emerald-800">Create a secure link for the patient to set a password and view their appointments and prescriptions.</p>
+          </div>
+          <button type="button" disabled={inviteBusy} onClick={createInvite} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-60">
+            {inviteBusy ? "Creating…" : "Create invite link"}
+          </button>
+        </div>
+        {inviteUrl && (
+          <div className="mt-3 flex gap-2">
+            <input aria-label="Patient app invitation link" readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} className="min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-2 py-1.5 text-xs text-slate-700" />
+            <button type="button" onClick={copyInvite} className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-1.5 text-xs font-medium text-emerald-800">
+              <Copy className="h-3.5 w-3.5" /> Copy
+            </button>
+          </div>
+        )}
+        {inviteMessage && <p role="status" className="mt-2 text-xs text-emerald-800">{inviteMessage}</p>}
+        {inviteError && <p role="alert" className="mt-2 text-xs text-red-700">{inviteError}</p>}
+      </div>
       {patient.insuranceInfo && (
         <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
           <h5 className="text-xs font-semibold text-blue-700 mb-1">Insurance</h5>

@@ -1,9 +1,12 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const mockData = await import("../src/lib/mock-data.ts");
-const databasePath = fileURLToPath(new URL("../prisma/clinic-os.db", import.meta.url));
+const databasePath = process.env.CLINICOS_SEED_DATABASE_PATH
+  ? resolve(process.env.CLINICOS_SEED_DATABASE_PATH)
+  : fileURLToPath(new URL("../prisma/clinic-os.db", import.meta.url));
 const schemaPath = new URL("../prisma/schema.sql", import.meta.url);
 
 const collections = [
@@ -323,7 +326,7 @@ const clearOrder = [
   "daily_patient_flow",
 ];
 
-await mkdir(new URL("../prisma/", import.meta.url), { recursive: true });
+await mkdir(dirname(databasePath), { recursive: true });
 
 const database = new DatabaseSync(databasePath);
 
